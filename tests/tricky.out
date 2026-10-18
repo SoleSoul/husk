@@ -1,0 +1,16 @@
+[1,2,3]
+"hi" #5 some some #7
+(True,False)
+(Box {unBox = [1,2], label = "nums"},[1,2],Box {unBox = [1,2], label = "changed"})
+(Point {px = -1, py = 2},7,True)
+12
+11
+["a","b","c"]
+[Green,Blue,Red]
+(5,"x+y")
+("8",1.5)
+[(1,3),(2,2)]
+([2,4,6,8,10],[1,3,5,7,9])
+1: Red
+2: Green
+3: Blue

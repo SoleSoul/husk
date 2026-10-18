@@ -1,0 +1,4 @@
+caught: divide by zero
+handled: oops
+io: user error (bad)
+42

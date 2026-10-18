@@ -1,0 +1,9 @@
+(True,False,[Red light,Yellow light,Green light])
+(False,True,True,"NO!")
+(Just 6.0,Just 30.0,Nothing,Nothing)
+(True,False)
+8 mod 3 = 2
+3 mod 2 = 1
+2 mod 1 = 0
+Finished with 1
+[(False,1 % 40),(False,9 % 40),(False,1 % 40),(False,9 % 40),(False,1 % 40),(False,9 % 40),(False,1 % 40),(True,9 % 40)]

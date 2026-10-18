@@ -1,0 +1,25 @@
+fromList [(1,"a"),(2,"b"),(3,"c")]
+(Just "b",Nothing,True,3)
+fromList [(1,"a"),(2,"b"),(3,"c"),(4,"d")]
+(fromList [(1,"a"),(3,"c")],fromList [(1,"a!"),(2,"b"),(3,"c")])
+([(1,1),(2,1),(3,1)],[1,2,3],["a","b","c"])
+("?","c")
+fromList [("a",3),("b",2),("c",1)]
+[(1,1),(2,12),(3,30)]
+fromList [('b',2),('d',4),('f',6)]
+33
+(Just (1,"a"),Just (3,"c"),(1,"a"))
+(fromList [(1,"a?"),(2,"b"),(3,"c")],fromList [(1,"a"),(2,"b"),(3,"c"),(7,"new")])
+(Just (1,"a"),Nothing,Just (2,"b"))
+(11,3,fromList [(1,"ba")])
+(10000,Just 99980001,333383335000)
+5000
+fromList [(2,('b',"x"))]
+fromList [(1,'a')]
+fromList "imps"
+(True,4,"jnqt")
+(fromList [1,2,3,4],fromList [2,3])
+fromList [1,3,5,7,9]
+1000
+[(1,"ca"),(2,"b")]
+([0,3,5],'e')

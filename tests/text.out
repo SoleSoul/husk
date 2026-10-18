@@ -1,0 +1,8 @@
+Hello, Text!
+("The quick brown fox",["The","quick","brown","fox"],23)
+(["a","b","","c"],"SHOUT","f00 b00")
+(True,("a","::b::c"),"x-y-z")
+(["one","two"],"42",3)
+plain String literal still works
+(["a","b","c"],[[1,2],[3,4],[5]],["a","b"])
+("quoted","***mid***","00042")

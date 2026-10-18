@@ -1,0 +1,13 @@
+small
+even: 4
+even: 8
+9
+negative
+zero
+odd positive
+even positive
+huge
+Config {verbose = False, level = 3, name = "default"}
+7
+neg zero pos
+[11,21,12,22]

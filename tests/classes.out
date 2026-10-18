@@ -1,0 +1,23 @@
+([5,6,60],60)
+Branch (Leaf (0,'a')) (Branch (Leaf (1,'b')) (Leaf (2,'c')))
+Branch (Leaf 6) (Branch (Leaf 8) (Leaf 10))
+(12,60,3,5,True,[3,4,5])
+shape with area 9.0
+(40.0,8.0)
+MaxInt 9
+<1|"x">
+2.5
+(Just 30,Nothing)
+[Right 42,Left "negative",Left "bad number: x"]
+(3,"s")
+(True,True)
+(Just [1,2],Nothing)
+Right [1,2,3]
+[[1,2],[1,20],[10,2],[10,20]]
+(Just 3,Right 3)
+([5],Just (1,"x"))
+["ab","abb","aab","aabb"]
+"a, b, c"
+([1,2,3],"abcd","")
+(GT,True)
+[1,1,2,2,3,3]

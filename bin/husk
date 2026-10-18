@@ -1,0 +1,22 @@
+#!/bin/sh
+# husk launcher: runs the husk compiler on Chez Scheme.
+HUSK_HOME="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+export HUSK_HOME
+CHEZ="${CHEZ:-$(command -v chez || command -v scheme || command -v chezscheme)}"
+if [ -z "$CHEZ" ]; then
+  echo "husk: Chez Scheme not found (install it, or set CHEZ=/path/to/scheme)" >&2
+  exit 1
+fi
+RUN="$CHEZ --libdirs $HUSK_HOME/src --compile-imported-libraries -q --program $HUSK_HOME/src/main.ss"
+
+# (Re)build the compiler quietly when its sources are newer than the build.
+SO="$HUSK_HOME/src/husk/compiler.so"
+if [ ! -f "$SO" ] || [ -n "$(find "$HUSK_HOME/src" -name '*.ss' -newer "$SO" 2>/dev/null | head -1)" ]; then
+  $RUN --version > /dev/null || exit 1
+fi
+
+# Use rlwrap for line editing and history in the REPL when available.
+if [ $# -eq 0 ] && [ -t 0 ] && command -v rlwrap > /dev/null 2>&1 && [ -z "$HUSK_NO_RLWRAP" ]; then
+  exec rlwrap -a -c -H "$HOME/.husk_history" $RUN
+fi
+exec $RUN "$@"

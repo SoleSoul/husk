@@ -1,0 +1,3 @@
+[Just 7,Just 9,Just 7,Nothing,Just 42]
+Just (JObj [("a",JArr [JNum 1,JBool True,JNull]),("b",JObj [("c",JStr "hi")])],"")
+Just ("xxx","y")
