@@ -117,3 +117,7 @@ tests/run.sh
 
 runs every `tests/*.hs` and compares its output with the matching `.out`
 file, and checks that each `tests/errors/*.hs` fails with the expected message.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
