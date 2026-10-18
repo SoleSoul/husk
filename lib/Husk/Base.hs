@@ -46,12 +46,10 @@ data SomeException
 
 type String = [Char]
 type Rational = Ratio Integer
-type Float = Double
-type Word = Int
 type ShowS = String -> String
 type ReadS a = String -> [(a, String)]
 type FilePath = String
-type IOError = SomeException
+type IOError = IOException
 
 data Bool = False | True deriving (Eq, Ord, Show, Read, Bounded)
 data Ordering = LT | EQ | GT deriving (Eq, Ord, Show, Read, Enum, Bounded)
@@ -67,11 +65,11 @@ foreign import prim "<=" primIntLe :: Int -> Int -> Bool
 foreign import prim ">" primIntGt :: Int -> Int -> Bool
 foreign import prim ">=" primIntGe :: Int -> Int -> Bool
 foreign import prim "hs-compare" primCompareInt :: Int -> Int -> Ordering
-foreign import prim "+" primIntAdd :: Int -> Int -> Int
-foreign import prim "-" primIntSub :: Int -> Int -> Int
-foreign import prim "*" primIntMul :: Int -> Int -> Int
-foreign import prim "-" primIntNegate :: Int -> Int
-foreign import prim "abs" primIntAbs :: Int -> Int
+foreign import prim "hs-int-add" primIntAdd :: Int -> Int -> Int
+foreign import prim "hs-int-sub" primIntSub :: Int -> Int -> Int
+foreign import prim "hs-int-mul" primIntMul :: Int -> Int -> Int
+foreign import prim "hs-int-negate" primIntNegate :: Int -> Int
+foreign import prim "hs-int-abs" primIntAbs :: Int -> Int
 foreign import prim "hs-signum" primIntSignum :: Int -> Int
 foreign import prim "hs-quot" primIntQuot :: Int -> Int -> Int
 foreign import prim "hs-rem" primIntRem :: Int -> Int -> Int
@@ -82,7 +80,7 @@ foreign import prim "hs-div-mod" primIntDivMod :: Int -> Int -> (Int, Int)
 foreign import prim "max" primIntMax :: Int -> Int -> Int
 foreign import prim "min" primIntMin :: Int -> Int -> Int
 foreign import prim "hs-show-int" primShowInt :: Int -> String
-foreign import prim "hs-unsafe-coerce" primIntegerToInt :: Integer -> Int
+foreign import prim "hs-int64" primIntegerToInt :: Integer -> Int
 foreign import prim "hs-unsafe-coerce" primIntToInteger :: Int -> Integer
 foreign import prim "inexact" primIntToDouble :: Int -> Double
 
@@ -202,13 +200,20 @@ foreign import lazy "hs-seq" seq :: a -> b -> b
 foreign import prim "hs-error-hs" error :: [Char] -> a
 foreign import prim "hs-error-hs" errorWithoutStackTrace :: [Char] -> a
 foreign import prim "hs-undefined" undefined :: a
+-- the compiler calls these for `error` and `undefined` in user code, with
+-- the call site ("error, called at prog.hs:3:9 in main:Main")
+foreign import prim "hs-error-at" primErrorAt :: String -> [Char] -> a
+foreign import prim "hs-undefined-at" primUndefinedAt :: String -> a
+foreign import prim "hs-error-call-message" primErrorCallMessage :: SomeException -> String
 foreign import lazy "hs-trace" primTrace :: String -> a -> a
 foreign import prim "hs-reads-integer" primReadsInteger :: String -> [(Integer, String)]
 foreign import prim "hs-reads-double" primReadsDouble :: String -> [(Double, String)]
 foreign import prim "hs-reads-char" primReadsChar :: String -> [(Char, String)]
 foreign import prim "hs-reads-string" primReadsString :: String -> [(String, String)]
-foreign import prim "hs-show-ffloat" primShowFFloat :: Int -> Double -> String
-foreign import prim "hs-show-efloat" primShowEFloat :: Int -> Double -> String
+foreign import prim "hs-show-ffloat" primShowFFloat :: Int -> Bool -> Double -> String
+foreign import prim "hs-show-efloat" primShowEFloat :: Int -> Bool -> Double -> String
+foreign import prim "hs-float32" primFloat32 :: Double -> Double
+foreign import prim "hs-show-float" primShowFloat :: Double -> String
 foreign import prim "hs-show-hex" primShowHex :: Integer -> String
 foreign import prim "hs-show-oct" primShowOct :: Integer -> String
 
@@ -216,6 +221,9 @@ foreign import prim "hs-shift-l" primShiftL :: Integer -> Int -> Integer
 foreign import prim "hs-shift-r" primShiftR :: Integer -> Int -> Integer
 foreign import prim "hs-test-bit" primTestBit :: Integer -> Int -> Bool
 foreign import prim "hs-pop-count" primPopCount :: Integer -> Int
+foreign import prim "hs-int-pop-count" primIntPopCount :: Int -> Int
+foreign import prim "hs-int-shift-l" primIntShiftL :: Int -> Int -> Int
+foreign import prim "hs-wrap-bits" primWrapBits :: Int -> Bool -> Integer -> Integer
 foreign import prim "hs-and" primAnd :: Integer -> Integer -> Integer
 foreign import prim "hs-or" primOr :: Integer -> Integer -> Integer
 foreign import prim "hs-xor" primXor :: Integer -> Integer -> Integer
@@ -251,10 +259,17 @@ foreign import prim "hs-cpu-time" getCPUTime :: IO Integer
 foreign import prim "hs-new-ioref" newIORef :: a -> IO (IORef a)
 foreign import prim "hs-read-ioref" readIORef :: IORef a -> IO a
 foreign import prim "hs-write-ioref" writeIORef :: IORef a -> a -> IO ()
-foreign import prim "hs-catch" catch :: IO a -> (SomeException -> IO a) -> IO a
+foreign import prim "hs-catch" primCatch :: IO a -> (SomeException -> IO a) -> IO a
 foreign import lazy "hs-evaluate" evaluate :: a -> IO a
-foreign import prim "hs-throw-error" primThrowError :: String -> IO a
 foreign import prim "hs-show-exception" primShowException :: SomeException -> String
+foreign import prim "hs-exception-kind" primExceptionKind :: SomeException -> Int
+foreign import prim "hs-exception-match" primExceptionMatch :: String -> SomeException -> Maybe a
+foreign import lazy "hs-make-typed" primMakeTyped :: String -> String -> a -> SomeException
+foreign import prim "hs-make-error-call" primMakeErrorCall :: String -> SomeException
+foreign import prim "hs-make-io-error" primMakeIOError :: String -> SomeException
+foreign import prim "hs-make-arith" primMakeArith :: String -> SomeException
+foreign import prim "hs-raise" primRaise :: SomeException -> a
+foreign import prim "hs-throw-io" primRaiseIO :: SomeException -> IO a
 foreign import prim "hs-unsafe-perform-io" unsafePerformIO :: IO a -> a
 foreign import prim "hs-io-fix" fixIO :: (a -> IO a) -> IO a
 
@@ -512,19 +527,20 @@ class Bounded a where
   minBound, maxBound :: a
 
 instance Enum Int where
-  succ x = x + 1
-  pred x = x - 1
+  succ x = if x == maxBound then error "Prelude.Enum.succ{Int}: tried to take `succ' of maxBound" else x + 1
+  pred x = if x == minBound then error "Prelude.Enum.pred{Int}: tried to take `pred' of minBound" else x - 1
   toEnum x = x
   fromEnum x = x
-  enumFrom x = x : enumFrom (x + 1)
-  enumFromTo x y = if x > y then [] else x : enumFromTo (x + 1) y
-  enumFromThen x y = x : enumFromThen y (y + y - x)
-  enumFromThenTo x y z = intEnumFromThenTo x (y - x) z
+  enumFrom x = enumFromTo x maxBound
+  enumFromTo x y = if x > y then [] else x : (if x == y then [] else enumFromTo (x + 1) y)
+  enumFromThen x y = enumFromThenTo x y (if y >= x then maxBound else minBound)
+  enumFromThenTo x y z = intEnumFromThenTo (toInteger x) (toInteger y - toInteger x) (toInteger z)
 
-intEnumFromThenTo :: Int -> Int -> Int -> [Int]
+-- (in Integer, so that the last step can't wrap around)
+intEnumFromThenTo :: Integer -> Integer -> Integer -> [Int]
 intEnumFromThenTo x d z
-  | d >= 0 = if x > z then [] else x : intEnumFromThenTo (x + d) d z
-  | otherwise = if x < z then [] else x : intEnumFromThenTo (x + d) d z
+  | d >= 0 = if x > z then [] else primIntegerToInt x : intEnumFromThenTo (x + d) d z
+  | otherwise = if x < z then [] else primIntegerToInt x : intEnumFromThenTo (x + d) d z
 
 instance Bounded Int where
   minBound = -9223372036854775808
@@ -753,6 +769,86 @@ instance RealFloat Double where
   decodeFloat = primDecodeDouble
   atan2 = primAtan2
 
+-- Float: single precision.  A Float is a Double rounded to the nearest
+-- single-precision value after every operation (for + - * / and sqrt this
+-- gives exactly the IEEE single-precision result).
+newtype Float = MkFloat Double deriving (Eq, Ord)
+
+float1 :: (Double -> Double) -> Float -> Float
+float1 f (MkFloat x) = MkFloat (primFloat32 (f x))
+
+float2 :: (Double -> Double -> Double) -> Float -> Float -> Float
+float2 f (MkFloat x) (MkFloat y) = MkFloat (primFloat32 (f x y))
+
+floatToDouble :: Float -> Double
+floatToDouble (MkFloat x) = x
+
+doubleToFloat :: Double -> Float
+doubleToFloat x = MkFloat (primFloat32 x)
+
+instance Num Float where
+  (+) = float2 primDoubleAdd
+  (-) = float2 primDoubleSub
+  (*) = float2 primDoubleMul
+  negate = float1 primDoubleNegate
+  abs = float1 primDoubleAbs
+  signum = float1 primDoubleSignum
+  fromInteger n = doubleToFloat (primIntegerToDouble n)
+
+instance Real Float where
+  toRational (MkFloat x) = primDoubleToRational x
+
+instance Fractional Float where
+  (/) = float2 primDoubleDiv
+  fromRational r = doubleToFloat (primRationalToDouble r)
+
+instance Floating Float where
+  pi = doubleToFloat 3.141592653589793
+  exp = float1 primExp
+  log = float1 primLog
+  sqrt = float1 primSqrt
+  sin = float1 primSin
+  cos = float1 primCos
+  tan = float1 primTan
+  asin = float1 primAsin
+  acos = float1 primAcos
+  atan = float1 primAtan
+  sinh = float1 primSinh
+  cosh = float1 primCosh
+  tanh = float1 primTanh
+  asinh = float1 primAsinh
+  acosh = float1 primAcosh
+  atanh = float1 primAtanh
+  (**) = float2 primPowDouble
+  logBase b x = log x / log b
+
+instance RealFrac Float where
+  properFraction (MkFloat x) = let (n, f) = properFraction x in (n, doubleToFloat f)
+  truncate (MkFloat x) = truncate x
+  round (MkFloat x) = round x
+  ceiling (MkFloat x) = ceiling x
+  floor (MkFloat x) = floor x
+
+instance RealFloat Float where
+  isNaN (MkFloat x) = isNaN x
+  isInfinite (MkFloat x) = isInfinite x
+  isNegativeZero (MkFloat x) = isNegativeZero x
+  floatDigits _ = 24
+  decodeFloat (MkFloat x)
+    | x == 0 = (0, 0)
+    | otherwise = let (m, e) = decodeFloat x in (m `quot` 536870912, e + 29)
+  atan2 = float2 primAtan2
+
+instance Enum Float where
+  succ x = x + 1
+  pred x = x - 1
+  toEnum n = fromIntegral n
+  fromEnum x = truncate x
+  enumFrom = numericEnumFrom
+  enumFromThen = numericEnumFromThen
+  enumFromTo = numericEnumFromTo
+  enumFromThenTo = numericEnumFromThenTo
+
 subtract :: Num a => a -> a -> a
 subtract x y = y - x
 
@@ -770,12 +866,15 @@ lcm x y = fromInteger (primIntegerLcm (toInteger x) (toInteger y))
 x0 ^ y0
   | y0 < 0 = error "Negative exponent"
   | y0 == 0 = 1
-  | otherwise = powAcc x0 y0 1
+  | otherwise = f x0 y0
   where
-    powAcc x y acc
-      | y == 0 = acc
-      | even y = powAcc (x * x) (y `quot` 2) acc
-      | otherwise = powAcc (x * x) (y `quot` 2) (acc * x)
+    -- GHC's algorithm (it needs only (*), not fromInteger)
+    f x y | even y = f (x * x) (y `quot` 2)
+          | y == 1 = x
+          | otherwise = g (x * x) (y `quot` 2) x
+    g x y z | even y = g (x * x) (y `quot` 2) z
+            | y == 1 = x * z
+            | otherwise = g (x * x) (y `quot` 2) (x * z)
 
 (^^) :: (Fractional a, Integral b) => a -> b -> a
 x ^^ n = if n >= 0 then x ^ n else recip (x ^ negate n)
@@ -847,9 +946,11 @@ instance Integral a => Enum (Ratio a) where
 
 class Semigroup a where
   (<>) :: a -> a -> a
-  sconcat :: [a] -> a
+  sconcat :: NonEmpty a -> a
   stimes :: Integral b => b -> a -> a
-  sconcat (x:xs) = foldr1 (<>) (x:xs)
+  sconcat (a :| as) = go a as
+    where go b (c : cs) = b <> go c cs
+          go b [] = b
   stimes n x = if n <= 1 then x else x <> stimes (n - 1) x
 
 class Semigroup a => Monoid a where
@@ -858,6 +959,13 @@ class Semigroup a => Monoid a where
   mconcat :: [a] -> a
   mappend = (<>)
   mconcat xs = foldr mappend mempty xs
+
+-- non-empty lists (Data.List.NonEmpty)
+infixr 5 :|
+data NonEmpty a = a :| [a] deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+
+instance Semigroup (NonEmpty a) where
+  (a :| as) <> (b :| bs) = a :| (as ++ b : bs)
 
 instance Semigroup [a] where
   (<>) = (++)
@@ -2018,6 +2126,20 @@ instance (Show a, Show b, Show c, Show d, Show e, Show f, Show g) => Show (a, b,
 instance Show SomeException where
   show = primShowException
 
+instance Show IOException where
+  show (IOError e) = primShowException e
+
+instance Show ErrorCall where
+  show (ErrorCall m) = m
+
+instance Show ArithException where
+  show Overflow = "arithmetic overflow"
+  show Underflow = "arithmetic underflow"
+  show LossOfPrecision = "loss of precision"
+  show DivideByZero = "divide by zero"
+  show Denormal = "denormal"
+  show RatioZeroDenominator = "Ratio has zero denominator"
+
 -- Numeric
 
 showHex :: Integral a => a -> ShowS
@@ -2027,10 +2149,10 @@ showOct :: Integral a => a -> ShowS
 showOct n = showString (primShowOct (toInteger n))
 
 showFFloat :: RealFloat a => Maybe Int -> a -> ShowS
-showFFloat d x = showString (primShowFFloat (maybe (-1) id d) (realToDouble x))
+showFFloat d x = showString (primShowFFloat (maybe (-1) id d) (floatDigits x == 24) (realToDouble x))
 
 showEFloat :: RealFloat a => Maybe Int -> a -> ShowS
-showEFloat d x = showString (primShowEFloat (maybe (-1) id d) (realToDouble x))
+showEFloat d x = showString (primShowEFloat (maybe (-1) id d) (floatDigits x == 24) (realToDouble x))
 
 showGFloat :: RealFloat a => Maybe Int -> a -> ShowS
 showGFloat d x = let y = abs (realToDouble x)
@@ -2154,6 +2276,12 @@ instance Read Integer where
     [] -> readParenNum s
     rs -> rs
 
+instance Read Float where
+  readsPrec d s = [(doubleToFloat x, r) | (x, r) <- readsPrec d s]
+
+instance Show Float where
+  showsPrec d (MkFloat x) = showParen (d > 6 && x < 0) (showString (primShowFloat x))
+
 instance Read Double where
   readsPrec _ s = case primReadsDouble s of
     [] -> readParenNum s
@@ -2222,14 +2350,18 @@ hPrint h x = hPutStrLn h (show x)
 data BufferMode = NoBuffering | LineBuffering | BlockBuffering (Maybe Int)
   deriving (Eq, Show)
 
+foreign import prim "hs-set-tty-mode" primSetTtyMode :: Handle -> Int -> Bool -> IO ()
+
+-- (only stdin's buffering matters: NoBuffering reads keys as they are
+-- typed; output is flushed before reading input anyway)
 hSetBuffering :: Handle -> BufferMode -> IO ()
-hSetBuffering _ _ = return ()
+hSetBuffering h m = primSetTtyMode h 1 (m /= NoBuffering)
 
 hGetBuffering :: Handle -> IO BufferMode
 hGetBuffering _ = return LineBuffering
 
 hSetEcho :: Handle -> Bool -> IO ()
-hSetEcho _ _ = return ()
+hSetEcho h on = primSetTtyMode h 0 on
 
 data IOMode = ReadMode | WriteMode | AppendMode | ReadWriteMode
   deriving (Eq, Ord, Show, Enum)
@@ -2268,45 +2400,113 @@ atomicModifyIORef' r f = readIORef r >>= \x -> case f x of (a, b) -> a `seq` wri
 atomicWriteIORef :: IORef a -> a -> IO ()
 atomicWriteIORef = writeIORef
 
--- exceptions (all exceptions are SomeException in husk)
+-- Exceptions.  A SomeException is the raised Scheme object; its payload
+-- tells which Haskell type it holds (see runtime.ss).  User-defined
+-- exception types work like GHC's: the compiler gives each
+-- `instance Exception T` a primExceptionTag that identifies T, so the
+-- default toException/fromException need no Typeable.
+
+class Show e => Exception e where
+  toException :: e -> SomeException
+  fromException :: SomeException -> Maybe e
+  displayException :: e -> String
+  primExceptionTag :: e -> String
+  toException e = primMakeTyped (primExceptionTag e) (show e) e
+  -- (primExceptionTag ignores its argument, so the knot is never forced)
+  fromException se = r
+    where r = primExceptionMatch (primExceptionTag (unJust r)) se
+          unJust (Just x) = x
+  displayException = show
+
+instance Exception SomeException where
+  toException e = e
+  fromException e = Just e
+  primExceptionTag _ = "SomeException"
+
+-- raised by error, undefined and failed pattern matches
+data ErrorCall = ErrorCall String
+
+instance Eq ErrorCall where
+  ErrorCall a == ErrorCall b = a == b
+
+instance Exception ErrorCall where
+  toException (ErrorCall m) = primMakeErrorCall m
+  fromException e = if primExceptionKind e == 0 then Just (ErrorCall (primErrorCallMessage e)) else Nothing
+  primExceptionTag _ = "ErrorCall"
+
+newtype IOException = IOError SomeException
+
+instance Eq IOException where
+  a == b = show a == show b
+
+instance Exception IOException where
+  toException (IOError e) = e
+  fromException e = if primExceptionKind e == 1 then Just (IOError e) else Nothing
+  primExceptionTag _ = "IOException"
+
+data ArithException = Overflow | Underflow | LossOfPrecision | DivideByZero | Denormal
+                    | RatioZeroDenominator
+  deriving (Eq, Ord)
+
+instance Exception ArithException where
+  toException e = primMakeArith (show e)
+  fromException e
+    | primExceptionKind e == 2 = lookup (primShowException e) [(show a, a) | a <- arithExceptions]
+    | otherwise = Nothing
+  primExceptionTag _ = "ArithException"
+
+arithExceptions :: [ArithException]
+arithExceptions = [Overflow, Underflow, LossOfPrecision, DivideByZero, Denormal, RatioZeroDenominator]
+
+-- handlers only see exceptions of their argument type; others propagate
+catch :: Exception e => IO a -> (e -> IO a) -> IO a
+catch a h = primCatch a (\se -> case fromException se of
+                                  Just e -> h e
+                                  Nothing -> primRaise se)
 
 ioError :: IOError -> IO a
-ioError e = primThrowError (show e)
+ioError = throwIO
 
 userError :: String -> IOError
-userError s = unsafePerformIO (catch (primThrowError ("user error (" ++ s ++ ")")) return)
+userError s = IOError (primMakeIOError ("user error (" ++ s ++ ")"))
 
-throwIO :: SomeException -> IO a
-throwIO e = primThrowError (show e)
+throwIO :: Exception e => e -> IO a
+throwIO e = primRaiseIO (toException e)
 
-throw :: SomeException -> a
-throw e = error (show e)
+throw :: Exception e => e -> a
+throw e = primRaise (toException e)
 
-try :: IO a -> IO (Either SomeException a)
+try :: Exception e => IO a -> IO (Either e a)
 try a = catch (a >>= \v -> return (Right v)) (\e -> return (Left e))
 
-handle :: (SomeException -> IO a) -> IO a -> IO a
+handle :: Exception e => (e -> IO a) -> IO a -> IO a
 handle h a = catch a h
 
-displayException :: SomeException -> String
-displayException = show
+catchJust :: Exception e => (e -> Maybe b) -> IO a -> (b -> IO a) -> IO a
+catchJust p a h = catch a (\e -> maybe (throwIO e) h (p e))
+
+handleJust :: Exception e => (e -> Maybe b) -> (b -> IO a) -> IO a -> IO a
+handleJust p h a = catchJust p a h
+
+tryJust :: Exception e => (e -> Maybe b) -> IO a -> IO (Either b a)
+tryJust p a = catch (fmap Right a) (\e -> maybe (throwIO e) (return . Left) (p e))
 
 bracket :: IO a -> (a -> IO b) -> (a -> IO c) -> IO c
 bracket acquire release use = acquire >>= \a ->
-  catch (use a) (\e -> release a >> throwIO e) >>= \r -> release a >> return r
+  primCatch (use a) (\e -> release a >> primRaiseIO e) >>= \r -> release a >> return r
 
 finally :: IO a -> IO b -> IO a
-finally a sequel = catch a (\e -> sequel >> throwIO e) >>= \r -> sequel >> return r
+finally a sequel = primCatch a (\e -> sequel >> primRaiseIO e) >>= \r -> sequel >> return r
 
 bracket_ :: IO a -> IO b -> IO c -> IO c
 bracket_ before after thing = bracket before (const after) (const thing)
 
 -- like bracket, but only releases when the action fails
 bracketOnError :: IO a -> (a -> IO b) -> (a -> IO c) -> IO c
-bracketOnError acquire release use = acquire >>= \a -> catch (use a) (\e -> release a >> throwIO e)
+bracketOnError acquire release use = acquire >>= \a -> primCatch (use a) (\e -> release a >> primRaiseIO e)
 
 onException :: IO a -> IO b -> IO a
-onException a what = catch a (\e -> what >> throwIO e)
+onException a what = primCatch a (\e -> what >> primRaiseIO e)
 
 -- System.Exit
 
@@ -2364,11 +2564,11 @@ instance Bits Int where
   a .|. b = primIntegerToInt (primOr (primIntToInteger a) (primIntToInteger b))
   xor a b = primIntegerToInt (primXor (primIntToInteger a) (primIntToInteger b))
   complement a = primIntegerToInt (primComplement (primIntToInteger a))
-  shiftL a n = primIntegerToInt (primShiftL (primIntToInteger a) n)
+  shiftL a n = primIntShiftL a n
   shiftR a n = primIntegerToInt (primShiftR (primIntToInteger a) n)
-  testBit a n = primTestBit (primIntToInteger a) n
-  popCount a = primPopCount (primIntToInteger a)
-  bit n = primIntegerToInt (primShiftL 1 n)
+  testBit a n = n < 64 && primTestBit (primIntToInteger a) n
+  popCount a = primIntPopCount a
+  bit n = primIntShiftL 1 n
   setBit a n = a .|. bit n
   clearBit a n = a .&. complement (bit n)
   complementBit a n = a `xor` bit n
@@ -2388,6 +2588,324 @@ instance Bits Integer where
   clearBit a n = a .&. complement (bit n)
   complementBit a n = a `xor` bit n
   zeroBits = 0
+
+------------------------------------------------------------------------
+-- Sized integers.  Int itself is 64-bit and wraps around (see the
+-- primitives).  Int8 ... Word64 and Word are newtypes over Integer whose
+-- operations wrap to the type's size; the class SizedInt gives the generic
+-- definitions below their size.  (Int64 is a synonym for Int.)
+
+class SizedInt a where
+  sizedBits :: a -> Int
+  sizedSigned :: a -> Bool
+  sizedTo :: a -> Integer
+  sizedRaw :: Integer -> a       -- no wrapping
+
+sizedFrom :: SizedInt a => Integer -> a
+sizedFrom x = r where r = sizedRaw (primWrapBits (sizedBits r) (sizedSigned r) x)
+
+sized2 :: SizedInt a => (Integer -> Integer -> Integer) -> a -> a -> a
+sized2 f a b = sizedFrom (f (sizedTo a) (sizedTo b))
+
+sizedMin, sizedMax :: SizedInt a => a
+sizedMin = r where r = sizedRaw (if sizedSigned r then negate (2 ^ (sizedBits r - 1)) else 0)
+sizedMax = r where r = sizedRaw (if sizedSigned r then 2 ^ (sizedBits r - 1) - 1 else 2 ^ sizedBits r - 1)
+
+sizedShowsPrec :: SizedInt a => Int -> a -> ShowS
+sizedShowsPrec d x = showsPrec d (sizedTo x)
+
+sizedReadsPrec :: SizedInt a => Int -> ReadS a
+sizedReadsPrec d s = [(sizedFrom x, r) | (x, r) <- readsPrec d s]
+
+sizedToEnum :: SizedInt a => String -> Int -> a
+sizedToEnum name n
+  | toInteger n >= sizedTo (sizedMin `asTypeOf` r) && toInteger n <= sizedTo (sizedMax `asTypeOf` r) = r
+  | otherwise = error ("Enum.toEnum{" ++ name ++ "}: tag (" ++ show n ++ ") is outside of bounds")
+  where r = sizedRaw (toInteger n)
+
+sizedEnumFromTo :: SizedInt a => a -> a -> [a]
+sizedEnumFromTo a b = map sizedRaw (enumFromTo (sizedTo a) (sizedTo b))
+
+sizedEnumFromThenTo :: SizedInt a => a -> a -> a -> [a]
+sizedEnumFromThenTo a b c = map sizedRaw (enumFromThenTo (sizedTo a) (sizedTo b) (sizedTo c))
+
+sizedQuotRem, sizedDivMod :: SizedInt a => a -> a -> (a, a)
+sizedQuotRem a b = let (q, r) = quotRem (sizedTo a) (sizedTo b) in (sizedFrom q, sizedFrom r)
+sizedDivMod a b = let (q, r) = divMod (sizedTo a) (sizedTo b) in (sizedFrom q, sizedFrom r)
+
+sizedShiftR :: SizedInt a => a -> Int -> a
+sizedShiftR a n = sizedFrom (primShiftR (sizedTo a) n)
+
+sizedTestBit :: SizedInt a => a -> Int -> Bool
+sizedTestBit a n = n < sizedBits a && primTestBit (sizedTo a) n
+
+sizedPopCount :: SizedInt a => a -> Int
+sizedPopCount a = primPopCount (primWrapBits (sizedBits a) False (sizedTo a))
+
+
+newtype Int8 = MkInt8 Integer deriving (Eq, Ord)
+instance SizedInt Int8 where
+  sizedBits _ = 8
+  sizedSigned _ = True
+  sizedTo (MkInt8 x) = x
+  sizedRaw = MkInt8
+instance Show Int8 where showsPrec = sizedShowsPrec
+instance Read Int8 where readsPrec = sizedReadsPrec
+instance Bounded Int8 where { minBound = sizedMin; maxBound = sizedMax }
+instance Num Int8 where
+  { (+) = sized2 (+); (-) = sized2 (-); (*) = sized2 (*); negate = sizedFrom . negate . sizedTo
+  ; abs = sizedFrom . abs . sizedTo; signum = sizedFrom . signum . sizedTo; fromInteger = sizedFrom }
+instance Real Int8 where toRational = toRational . sizedTo
+instance Enum Int8 where
+  { toEnum = sizedToEnum "Int8"; fromEnum = primIntegerToInt . sizedTo
+  ; succ x = if x == maxBound then error "Enum.succ{Int8}: tried to take `succ' of maxBound" else x + 1
+  ; pred x = if x == minBound then error "Enum.pred{Int8}: tried to take `pred' of minBound" else x - 1
+  ; enumFrom x = sizedEnumFromTo x maxBound; enumFromTo = sizedEnumFromTo
+  ; enumFromThen x y = sizedEnumFromThenTo x y (if y >= x then maxBound else minBound)
+  ; enumFromThenTo = sizedEnumFromThenTo }
+instance Integral Int8 where
+  { quot = sized2 quot; rem = sized2 rem; div = sized2 div; mod = sized2 mod
+  ; quotRem = sizedQuotRem; divMod = sizedDivMod; toInteger = sizedTo }
+instance Ix Int8 where
+  { range = uncurry sizedEnumFromTo; index (m, _) i = primIntegerToInt (sizedTo i - sizedTo m)
+  ; inRange (m, n) i = m <= i && i <= n }
+instance Bits Int8 where
+  { (.&.) = sized2 primAnd; (.|.) = sized2 primOr; xor = sized2 primXor
+  ; complement = sizedFrom . primComplement . sizedTo; shiftL a n = sizedFrom (primShiftL (sizedTo a) n)
+  ; shiftR = sizedShiftR; testBit = sizedTestBit; popCount = sizedPopCount; bit n = sizedFrom (primShiftL 1 n)
+  ; setBit a n = a .|. bit n; clearBit a n = a .&. complement (bit n); complementBit a n = a `xor` bit n
+  ; zeroBits = 0 }
+
+newtype Int16 = MkInt16 Integer deriving (Eq, Ord)
+instance SizedInt Int16 where
+  sizedBits _ = 16
+  sizedSigned _ = True
+  sizedTo (MkInt16 x) = x
+  sizedRaw = MkInt16
+instance Show Int16 where showsPrec = sizedShowsPrec
+instance Read Int16 where readsPrec = sizedReadsPrec
+instance Bounded Int16 where { minBound = sizedMin; maxBound = sizedMax }
+instance Num Int16 where
+  { (+) = sized2 (+); (-) = sized2 (-); (*) = sized2 (*); negate = sizedFrom . negate . sizedTo
+  ; abs = sizedFrom . abs . sizedTo; signum = sizedFrom . signum . sizedTo; fromInteger = sizedFrom }
+instance Real Int16 where toRational = toRational . sizedTo
+instance Enum Int16 where
+  { toEnum = sizedToEnum "Int16"; fromEnum = primIntegerToInt . sizedTo
+  ; succ x = if x == maxBound then error "Enum.succ{Int16}: tried to take `succ' of maxBound" else x + 1
+  ; pred x = if x == minBound then error "Enum.pred{Int16}: tried to take `pred' of minBound" else x - 1
+  ; enumFrom x = sizedEnumFromTo x maxBound; enumFromTo = sizedEnumFromTo
+  ; enumFromThen x y = sizedEnumFromThenTo x y (if y >= x then maxBound else minBound)
+  ; enumFromThenTo = sizedEnumFromThenTo }
+instance Integral Int16 where
+  { quot = sized2 quot; rem = sized2 rem; div = sized2 div; mod = sized2 mod
+  ; quotRem = sizedQuotRem; divMod = sizedDivMod; toInteger = sizedTo }
+instance Ix Int16 where
+  { range = uncurry sizedEnumFromTo; index (m, _) i = primIntegerToInt (sizedTo i - sizedTo m)
+  ; inRange (m, n) i = m <= i && i <= n }
+instance Bits Int16 where
+  { (.&.) = sized2 primAnd; (.|.) = sized2 primOr; xor = sized2 primXor
+  ; complement = sizedFrom . primComplement . sizedTo; shiftL a n = sizedFrom (primShiftL (sizedTo a) n)
+  ; shiftR = sizedShiftR; testBit = sizedTestBit; popCount = sizedPopCount; bit n = sizedFrom (primShiftL 1 n)
+  ; setBit a n = a .|. bit n; clearBit a n = a .&. complement (bit n); complementBit a n = a `xor` bit n
+  ; zeroBits = 0 }
+
+newtype Int32 = MkInt32 Integer deriving (Eq, Ord)
+instance SizedInt Int32 where
+  sizedBits _ = 32
+  sizedSigned _ = True
+  sizedTo (MkInt32 x) = x
+  sizedRaw = MkInt32
+instance Show Int32 where showsPrec = sizedShowsPrec
+instance Read Int32 where readsPrec = sizedReadsPrec
+instance Bounded Int32 where { minBound = sizedMin; maxBound = sizedMax }
+instance Num Int32 where
+  { (+) = sized2 (+); (-) = sized2 (-); (*) = sized2 (*); negate = sizedFrom . negate . sizedTo
+  ; abs = sizedFrom . abs . sizedTo; signum = sizedFrom . signum . sizedTo; fromInteger = sizedFrom }
+instance Real Int32 where toRational = toRational . sizedTo
+instance Enum Int32 where
+  { toEnum = sizedToEnum "Int32"; fromEnum = primIntegerToInt . sizedTo
+  ; succ x = if x == maxBound then error "Enum.succ{Int32}: tried to take `succ' of maxBound" else x + 1
+  ; pred x = if x == minBound then error "Enum.pred{Int32}: tried to take `pred' of minBound" else x - 1
+  ; enumFrom x = sizedEnumFromTo x maxBound; enumFromTo = sizedEnumFromTo
+  ; enumFromThen x y = sizedEnumFromThenTo x y (if y >= x then maxBound else minBound)
+  ; enumFromThenTo = sizedEnumFromThenTo }
+instance Integral Int32 where
+  { quot = sized2 quot; rem = sized2 rem; div = sized2 div; mod = sized2 mod
+  ; quotRem = sizedQuotRem; divMod = sizedDivMod; toInteger = sizedTo }
+instance Ix Int32 where
+  { range = uncurry sizedEnumFromTo; index (m, _) i = primIntegerToInt (sizedTo i - sizedTo m)
+  ; inRange (m, n) i = m <= i && i <= n }
+instance Bits Int32 where
+  { (.&.) = sized2 primAnd; (.|.) = sized2 primOr; xor = sized2 primXor
+  ; complement = sizedFrom . primComplement . sizedTo; shiftL a n = sizedFrom (primShiftL (sizedTo a) n)
+  ; shiftR = sizedShiftR; testBit = sizedTestBit; popCount = sizedPopCount; bit n = sizedFrom (primShiftL 1 n)
+  ; setBit a n = a .|. bit n; clearBit a n = a .&. complement (bit n); complementBit a n = a `xor` bit n
+  ; zeroBits = 0 }
+
+newtype Word = MkWord Integer deriving (Eq, Ord)
+instance SizedInt Word where
+  sizedBits _ = 64
+  sizedSigned _ = False
+  sizedTo (MkWord x) = x
+  sizedRaw = MkWord
+instance Show Word where showsPrec = sizedShowsPrec
+instance Read Word where readsPrec = sizedReadsPrec
+instance Bounded Word where { minBound = sizedMin; maxBound = sizedMax }
+instance Num Word where
+  { (+) = sized2 (+); (-) = sized2 (-); (*) = sized2 (*); negate = sizedFrom . negate . sizedTo
+  ; abs = sizedFrom . abs . sizedTo; signum = sizedFrom . signum . sizedTo; fromInteger = sizedFrom }
+instance Real Word where toRational = toRational . sizedTo
+instance Enum Word where
+  { toEnum = sizedToEnum "Word"; fromEnum = primIntegerToInt . sizedTo
+  ; succ x = if x == maxBound then error "Enum.succ{Word}: tried to take `succ' of maxBound" else x + 1
+  ; pred x = if x == minBound then error "Enum.pred{Word}: tried to take `pred' of minBound" else x - 1
+  ; enumFrom x = sizedEnumFromTo x maxBound; enumFromTo = sizedEnumFromTo
+  ; enumFromThen x y = sizedEnumFromThenTo x y (if y >= x then maxBound else minBound)
+  ; enumFromThenTo = sizedEnumFromThenTo }
+instance Integral Word where
+  { quot = sized2 quot; rem = sized2 rem; div = sized2 div; mod = sized2 mod
+  ; quotRem = sizedQuotRem; divMod = sizedDivMod; toInteger = sizedTo }
+instance Ix Word where
+  { range = uncurry sizedEnumFromTo; index (m, _) i = primIntegerToInt (sizedTo i - sizedTo m)
+  ; inRange (m, n) i = m <= i && i <= n }
+instance Bits Word where
+  { (.&.) = sized2 primAnd; (.|.) = sized2 primOr; xor = sized2 primXor
+  ; complement = sizedFrom . primComplement . sizedTo; shiftL a n = sizedFrom (primShiftL (sizedTo a) n)
+  ; shiftR = sizedShiftR; testBit = sizedTestBit; popCount = sizedPopCount; bit n = sizedFrom (primShiftL 1 n)
+  ; setBit a n = a .|. bit n; clearBit a n = a .&. complement (bit n); complementBit a n = a `xor` bit n
+  ; zeroBits = 0 }
+
+newtype Word8 = MkWord8 Integer deriving (Eq, Ord)
+instance SizedInt Word8 where
+  sizedBits _ = 8
+  sizedSigned _ = False
+  sizedTo (MkWord8 x) = x
+  sizedRaw = MkWord8
+instance Show Word8 where showsPrec = sizedShowsPrec
+instance Read Word8 where readsPrec = sizedReadsPrec
+instance Bounded Word8 where { minBound = sizedMin; maxBound = sizedMax }
+instance Num Word8 where
+  { (+) = sized2 (+); (-) = sized2 (-); (*) = sized2 (*); negate = sizedFrom . negate . sizedTo
+  ; abs = sizedFrom . abs . sizedTo; signum = sizedFrom . signum . sizedTo; fromInteger = sizedFrom }
+instance Real Word8 where toRational = toRational . sizedTo
+instance Enum Word8 where
+  { toEnum = sizedToEnum "Word8"; fromEnum = primIntegerToInt . sizedTo
+  ; succ x = if x == maxBound then error "Enum.succ{Word8}: tried to take `succ' of maxBound" else x + 1
+  ; pred x = if x == minBound then error "Enum.pred{Word8}: tried to take `pred' of minBound" else x - 1
+  ; enumFrom x = sizedEnumFromTo x maxBound; enumFromTo = sizedEnumFromTo
+  ; enumFromThen x y = sizedEnumFromThenTo x y (if y >= x then maxBound else minBound)
+  ; enumFromThenTo = sizedEnumFromThenTo }
+instance Integral Word8 where
+  { quot = sized2 quot; rem = sized2 rem; div = sized2 div; mod = sized2 mod
+  ; quotRem = sizedQuotRem; divMod = sizedDivMod; toInteger = sizedTo }
+instance Ix Word8 where
+  { range = uncurry sizedEnumFromTo; index (m, _) i = primIntegerToInt (sizedTo i - sizedTo m)
+  ; inRange (m, n) i = m <= i && i <= n }
+instance Bits Word8 where
+  { (.&.) = sized2 primAnd; (.|.) = sized2 primOr; xor = sized2 primXor
+  ; complement = sizedFrom . primComplement . sizedTo; shiftL a n = sizedFrom (primShiftL (sizedTo a) n)
+  ; shiftR = sizedShiftR; testBit = sizedTestBit; popCount = sizedPopCount; bit n = sizedFrom (primShiftL 1 n)
+  ; setBit a n = a .|. bit n; clearBit a n = a .&. complement (bit n); complementBit a n = a `xor` bit n
+  ; zeroBits = 0 }
+
+newtype Word16 = MkWord16 Integer deriving (Eq, Ord)
+instance SizedInt Word16 where
+  sizedBits _ = 16
+  sizedSigned _ = False
+  sizedTo (MkWord16 x) = x
+  sizedRaw = MkWord16
+instance Show Word16 where showsPrec = sizedShowsPrec
+instance Read Word16 where readsPrec = sizedReadsPrec
+instance Bounded Word16 where { minBound = sizedMin; maxBound = sizedMax }
+instance Num Word16 where
+  { (+) = sized2 (+); (-) = sized2 (-); (*) = sized2 (*); negate = sizedFrom . negate . sizedTo
+  ; abs = sizedFrom . abs . sizedTo; signum = sizedFrom . signum . sizedTo; fromInteger = sizedFrom }
+instance Real Word16 where toRational = toRational . sizedTo
+instance Enum Word16 where
+  { toEnum = sizedToEnum "Word16"; fromEnum = primIntegerToInt . sizedTo
+  ; succ x = if x == maxBound then error "Enum.succ{Word16}: tried to take `succ' of maxBound" else x + 1
+  ; pred x = if x == minBound then error "Enum.pred{Word16}: tried to take `pred' of minBound" else x - 1
+  ; enumFrom x = sizedEnumFromTo x maxBound; enumFromTo = sizedEnumFromTo
+  ; enumFromThen x y = sizedEnumFromThenTo x y (if y >= x then maxBound else minBound)
+  ; enumFromThenTo = sizedEnumFromThenTo }
+instance Integral Word16 where
+  { quot = sized2 quot; rem = sized2 rem; div = sized2 div; mod = sized2 mod
+  ; quotRem = sizedQuotRem; divMod = sizedDivMod; toInteger = sizedTo }
+instance Ix Word16 where
+  { range = uncurry sizedEnumFromTo; index (m, _) i = primIntegerToInt (sizedTo i - sizedTo m)
+  ; inRange (m, n) i = m <= i && i <= n }
+instance Bits Word16 where
+  { (.&.) = sized2 primAnd; (.|.) = sized2 primOr; xor = sized2 primXor
+  ; complement = sizedFrom . primComplement . sizedTo; shiftL a n = sizedFrom (primShiftL (sizedTo a) n)
+  ; shiftR = sizedShiftR; testBit = sizedTestBit; popCount = sizedPopCount; bit n = sizedFrom (primShiftL 1 n)
+  ; setBit a n = a .|. bit n; clearBit a n = a .&. complement (bit n); complementBit a n = a `xor` bit n
+  ; zeroBits = 0 }
+
+newtype Word32 = MkWord32 Integer deriving (Eq, Ord)
+instance SizedInt Word32 where
+  sizedBits _ = 32
+  sizedSigned _ = False
+  sizedTo (MkWord32 x) = x
+  sizedRaw = MkWord32
+instance Show Word32 where showsPrec = sizedShowsPrec
+instance Read Word32 where readsPrec = sizedReadsPrec
+instance Bounded Word32 where { minBound = sizedMin; maxBound = sizedMax }
+instance Num Word32 where
+  { (+) = sized2 (+); (-) = sized2 (-); (*) = sized2 (*); negate = sizedFrom . negate . sizedTo
+  ; abs = sizedFrom . abs . sizedTo; signum = sizedFrom . signum . sizedTo; fromInteger = sizedFrom }
+instance Real Word32 where toRational = toRational . sizedTo
+instance Enum Word32 where
+  { toEnum = sizedToEnum "Word32"; fromEnum = primIntegerToInt . sizedTo
+  ; succ x = if x == maxBound then error "Enum.succ{Word32}: tried to take `succ' of maxBound" else x + 1
+  ; pred x = if x == minBound then error "Enum.pred{Word32}: tried to take `pred' of minBound" else x - 1
+  ; enumFrom x = sizedEnumFromTo x maxBound; enumFromTo = sizedEnumFromTo
+  ; enumFromThen x y = sizedEnumFromThenTo x y (if y >= x then maxBound else minBound)
+  ; enumFromThenTo = sizedEnumFromThenTo }
+instance Integral Word32 where
+  { quot = sized2 quot; rem = sized2 rem; div = sized2 div; mod = sized2 mod
+  ; quotRem = sizedQuotRem; divMod = sizedDivMod; toInteger = sizedTo }
+instance Ix Word32 where
+  { range = uncurry sizedEnumFromTo; index (m, _) i = primIntegerToInt (sizedTo i - sizedTo m)
+  ; inRange (m, n) i = m <= i && i <= n }
+instance Bits Word32 where
+  { (.&.) = sized2 primAnd; (.|.) = sized2 primOr; xor = sized2 primXor
+  ; complement = sizedFrom . primComplement . sizedTo; shiftL a n = sizedFrom (primShiftL (sizedTo a) n)
+  ; shiftR = sizedShiftR; testBit = sizedTestBit; popCount = sizedPopCount; bit n = sizedFrom (primShiftL 1 n)
+  ; setBit a n = a .|. bit n; clearBit a n = a .&. complement (bit n); complementBit a n = a `xor` bit n
+  ; zeroBits = 0 }
+
+newtype Word64 = MkWord64 Integer deriving (Eq, Ord)
+instance SizedInt Word64 where
+  sizedBits _ = 64
+  sizedSigned _ = False
+  sizedTo (MkWord64 x) = x
+  sizedRaw = MkWord64
+instance Show Word64 where showsPrec = sizedShowsPrec
+instance Read Word64 where readsPrec = sizedReadsPrec
+instance Bounded Word64 where { minBound = sizedMin; maxBound = sizedMax }
+instance Num Word64 where
+  { (+) = sized2 (+); (-) = sized2 (-); (*) = sized2 (*); negate = sizedFrom . negate . sizedTo
+  ; abs = sizedFrom . abs . sizedTo; signum = sizedFrom . signum . sizedTo; fromInteger = sizedFrom }
+instance Real Word64 where toRational = toRational . sizedTo
+instance Enum Word64 where
+  { toEnum = sizedToEnum "Word64"; fromEnum = primIntegerToInt . sizedTo
+  ; succ x = if x == maxBound then error "Enum.succ{Word64}: tried to take `succ' of maxBound" else x + 1
+  ; pred x = if x == minBound then error "Enum.pred{Word64}: tried to take `pred' of minBound" else x - 1
+  ; enumFrom x = sizedEnumFromTo x maxBound; enumFromTo = sizedEnumFromTo
+  ; enumFromThen x y = sizedEnumFromThenTo x y (if y >= x then maxBound else minBound)
+  ; enumFromThenTo = sizedEnumFromThenTo }
+instance Integral Word64 where
+  { quot = sized2 quot; rem = sized2 rem; div = sized2 div; mod = sized2 mod
+  ; quotRem = sizedQuotRem; divMod = sizedDivMod; toInteger = sizedTo }
+instance Ix Word64 where
+  { range = uncurry sizedEnumFromTo; index (m, _) i = primIntegerToInt (sizedTo i - sizedTo m)
+  ; inRange (m, n) i = m <= i && i <= n }
+instance Bits Word64 where
+  { (.&.) = sized2 primAnd; (.|.) = sized2 primOr; xor = sized2 primXor
+  ; complement = sizedFrom . primComplement . sizedTo; shiftL a n = sizedFrom (primShiftL (sizedTo a) n)
+  ; shiftR = sizedShiftR; testBit = sizedTestBit; popCount = sizedPopCount; bit n = sizedFrom (primShiftL 1 n)
+  ; setBit a n = a .|. bit n; clearBit a n = a .&. complement (bit n); complementBit a n = a `xor` bit n
+  ; zeroBits = 0 }
 
 ------------------------------------------------------------------------
 -- Ix and arrays

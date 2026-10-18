@@ -91,7 +91,10 @@
        (and info
             (let ([saved dict-subst])
               (set! dict-subst (map cons (car info) subs))
-              (let ([r (const-dict (list-ref (cdr info) i))])
+              (let ([r (if (instinfo-gnd inst)
+                           ;; a newtype-derived dictionary is the representation's
+                           (let ([c (const-dict (instinfo-gnd inst))]) (and c (static-super c i)))
+                           (const-dict (list-ref (cdr info) i)))])
                 (set! dict-subst saved)
                 r))))]))
 
@@ -182,7 +185,7 @@
   (let ([d (resolve-hole d)])
     (match d
       [('dinst u subs) (let ([inst (hashtable-ref dict-table u #f)])
-                         (and inst (cons inst subs)))]
+                         (and inst (not (instinfo-gnd inst)) (cons inst subs)))]
       [else #f])))
 
 (define (inst-head-name inst)
@@ -190,11 +193,12 @@
     (and (TCon? h) (TCon-name h))))
 
 (define (known-num-type d)
-  ;; 'int (Int/Integer) | 'double | 'rational | #f
+  ;; 'int | 'integer | 'double | 'rational | #f
   (let ([ki (known-instance d)])
     (and ki
          (let ([n (inst-head-name (car ki))])
-           (cond [(memq n (list u-int u-integer)) 'int]
+           (cond [(eq? n u-int) 'int]
+                 [(eq? n u-integer) 'integer]
                  [(eq? n u-double) 'double]
                  [(eq? n (prel "Ratio")) 'rational]
                  [else #f])))))
@@ -253,8 +257,8 @@
                                   (values sp '())
                                   (values (global-callee (cdr dm)) (map cg-dict dicts)))))]
                       [else
-                       (values `(caf (hs-error ,(format "No instance nor default method for class operation ~a"
-                                                        (uname-base u))))
+                       (values `(caf (hs-error ,(format "~a: No instance nor default method for class operation ~a"
+                                                        (loc->string (instinfo-loc inst)) (uname-base u))))
                                '())]))
                   (values `(caf (vector-ref ,(cg-dict d0) ,(+ (class-nsupers cls) idx)))
                           (map cg-dict (cdr dicts))))))]
@@ -438,7 +442,9 @@
     [(int frac)
      (let* ([d (unbox bx)] [nt (known-num-type d)])
        (case nt
-         [(int) (if (eq? kind 'int) v (error 'husk "internal error: fractional literal at integral type"))]
+         [(int integer)
+          (unless (eq? kind 'int) (error 'husk "internal error: fractional literal at integral type"))
+          (if (eq? nt 'int) (hs-int64 v) v)]
          [(double) (exact->inexact v)]
          [(rational) v]
          [else
@@ -602,7 +608,8 @@
     [else
      (let* ([dicts (unbox bx)] [eqd (car dicts)] [numd (cdr dicts)] [nt (known-num-type numd)])
        (case nt
-         [(int) `(eqv? ,w ,val)]
+         [(int) `(eqv? ,w ,(hs-int64 val))]
+         [(integer) `(eqv? ,w ,val)]
          [(double) `(= ,w ,(exact->inexact val))]
          [(rational) `(= ,w ,val)]
          [else
@@ -932,7 +939,9 @@
        ;; instance dictionaries: functions first, then constants by class depth
        (let* ([with-ctx (filter (lambda (i) (pair? (instinfo-ctx i))) inst-infos)]
               [without (filter (lambda (i) (null? (instinfo-ctx i))) inst-infos)]
-              [depth (lambda (i) (class-depth (instinfo-class i)))]
+              ;; (a newtype-derived dictionary is another instance's, so it
+              ;; comes after the other instances of its depth)
+              [depth (lambda (i) (+ (* 2 (class-depth (instinfo-class i))) (if (instinfo-gnd i) 1 0)))]
               [sorted (sort (lambda (a b) (< (depth a) (depth b))) without)])
          (for-each (lambda (i) (emit! (cg-instance-dict i))) with-ctx)
          (for-each (lambda (i) (emit! (cg-instance-dict i))) sorted))
@@ -1010,10 +1019,12 @@
                                   `(delay-hs (,(cdr dm) ,self))
                                   (let ([rest (map (lambda (i) (gensym* "m")) (iota (- a 1)))])
                                     `(lambda ,rest (,(cdr dm) ,self ,@rest))))))]
-                      [else `(delay-hs (hs-error ,(format "No instance nor default method for class operation ~a"
-                                                          (uname-base m))))])))
+                      [else `(delay-hs (hs-error ,(format "~a: No instance nor default method for class operation ~a"
+                                                          (loc->string (instinfo-loc inst)) (uname-base m))))])))
                 (classinfo-methods ci)))]
-         [body `(letrec ([,self (vector ,@slots)]) ,self)])
+         [body (if (instinfo-gnd inst)
+                   (cg-dict (instinfo-gnd inst))      ; the representation's dictionary
+                   `(letrec ([,self (vector ,@slots)]) ,self))])
     (if (null? ctx-syms)
         `(define ,(instinfo-dict inst) ,body)
         `(define ,(instinfo-dict inst) (lambda ,ctx-syms ,body)))))

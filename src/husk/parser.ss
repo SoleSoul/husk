@@ -171,7 +171,10 @@
                   (expect-reserved "where")
                   (let ([items (block parse-top-item)])
                     (list name exports items))))
-              (list "Main" '((evar #f "main")) (block parse-top-item)))])
+              ;; no header: GHC assumes `module Main (main) where`, but exporting
+              ;; everything lets the REPL load files without a main (run-file
+              ;; checks for main itself)
+              (list "Main" #f (block parse-top-item)))])
     (unless (eq? (tok-kind (raw)) 'eof)
       (perr (raw) "end of input"))
     (let ([items (caddr result)])
@@ -441,6 +444,8 @@
                                           [('tvar _ n) n]
                                           [else (cerror loc "bad type variable in data declaration")]))
                            (cdr spine))]
+              [_ (when (reserved? "where")
+                   (cerror loc "GADT syntax (data ~a ... where) is not supported by husk; use ordinary constructors: data ~a = C1 ... | C2 ..." name name))]
               [cons (if (rop? "=")
                         (begin
                           (advance!)
@@ -477,6 +482,8 @@
                          (cond [(special? ")") (advance!) (reverse cs)]
                                [(special? ",") (advance!) (cl cs)]
                                [else (let ([t (advance!)])
+                                       (unless (or (special? ",") (special? ")"))
+                                         (cerror (tok-loc t) "deriving ~a with arguments: multi-parameter type classes (such as mtl's MonadState) are not supported by husk" (tok-text t)))
                                        (cl (cons (cons (tok-qual t) (tok-text t)) cs)))])))
                      (let ([t (advance!)]) (list (cons (tok-qual t) (tok-text t)))))])
             (loop (append acc classes))))
@@ -550,6 +557,7 @@
       `(constr ,loc ,name ,(list left (list strict right)) #f))))
 
 (define (parse-type-synonym loc)
+  (when (peek-is? 'varid "family") (cerror loc "type families are not supported by husk"))
   (let* ([head (parse-btype)] [spine (type-spine head)])
     (expect-rop "=")
     (let ([rhs (parse-type)])
@@ -575,6 +583,8 @@
       [(('tcon _ #f name) ('tvar _ tv))
        (let ([decls (if (reserved? "where") (begin (advance!) (parse-decls-block)) '())])
          `(class ,loc ,(car ctx+head) ,name ,tv ,decls))]
+      [(('tcon _ #f name) _ _ . _)
+       (cerror loc "multi-parameter type classes (class ~a with several parameters) are not supported by husk" name)]
       [else (cerror loc "class declarations must have the form: class C a where ...")])))
 
 (define (parse-instance loc)
@@ -643,7 +653,9 @@
     (let ([spine (type-spine t)])
       (match spine
         [(('tcon loc q name) arg) (list q name arg)]
-        [else (cerror (cadr t) "malformed class constraint (only single-parameter classes are supported)")])))
+        [(('tcon loc q name) _ _ . _)
+         (cerror loc "the constraint ~a has several parameters: multi-parameter type classes (such as mtl's MonadState s m) are not supported by husk" name)]
+        [else (cerror (cadr t) "malformed class constraint")])))
   (match t
     [('ttuple _ ts) (map one ts)]
     [('tcon _ #f "()") '()]
@@ -718,9 +730,6 @@
         (begin (advance!) `(tsig ,loc ,e ,(parse-qual-type)))
         e)))
 
-(define (block-exp-start?)
-  (or (rop? "\\") (reserved? "let") (reserved? "if") (reserved? "case") (reserved? "do")))
-
 ;; returns (op loc qual name con?) if the next token is an operator, else #f
 (define (peek-op)
   (let ([t (peek)])
@@ -751,7 +760,10 @@
       (let* ([items (if (varsym? "-")
                         (let ([l (cur-loc)]) (advance!) (cons `(neg ,l) items))
                         items)]
-             [block? (block-exp-start?)]
+             ;; a lambda, let or if extends as far right as possible, but a
+             ;; do or case block can be closed by layout and followed by an
+             ;; operator (`do ... <newline> <|> p`)
+             [block? (or (rop? "\\") (reserved? "let") (reserved? "if"))]
              [operand (parse-lexp)]
              [items (cons operand items)])
         (let ([op (and (not block?) (peek-op))])

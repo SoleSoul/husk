@@ -4,7 +4,7 @@ module Text.Printf (printf, hPrintf, PrintfType, PrintfArg(..), HPrintfType, UPr
 
 import Husk.Base
 
-data UPrintf = UInteger Integer | UChar Char | UString String | UDouble Double
+data UPrintf = UInteger Integer | UChar Char | UString String | UDouble Double | UFloat Float
 
 class PrintfArg a where
   toUPrintf :: a -> UPrintf
@@ -13,8 +13,18 @@ instance PrintfArg Int where
   toUPrintf n = UInteger (toInteger n)
 instance PrintfArg Integer where
   toUPrintf = UInteger
+instance PrintfArg Int8 where toUPrintf n = UInteger (toInteger n)
+instance PrintfArg Int16 where toUPrintf n = UInteger (toInteger n)
+instance PrintfArg Int32 where toUPrintf n = UInteger (toInteger n)
+instance PrintfArg Word where toUPrintf n = UInteger (toInteger n)
+instance PrintfArg Word8 where toUPrintf n = UInteger (toInteger n)
+instance PrintfArg Word16 where toUPrintf n = UInteger (toInteger n)
+instance PrintfArg Word32 where toUPrintf n = UInteger (toInteger n)
+instance PrintfArg Word64 where toUPrintf n = UInteger (toInteger n)
 instance PrintfArg Double where
   toUPrintf = UDouble
+instance PrintfArg Float where
+  toUPrintf = UFloat
 instance PrintfArg Char where
   toUPrintf = UChar
 instance PrintfArg [c] where
@@ -105,15 +115,21 @@ fmtOne flags width prec c u =
        ('s', UString s) -> maybe s (\p -> take p s) prec
        ('s', UInteger n) -> show n
        ('s', UDouble d) -> show d
+       ('s', UFloat d) -> show d
        ('s', UChar ch) -> [ch]
        ('v', UInteger n) -> show n
        ('v', UDouble d) -> showGFloat prec d ""
+       ('v', UFloat d) -> showGFloat prec d ""
        ('v', UString s) -> s
        ('v', UChar ch) -> [ch]
        ('f', UDouble d) -> signed (showFFloat prec d "")
        ('F', UDouble d) -> signed (showFFloat prec d "")
        ('e', UDouble d) -> signed (showEFloat prec d "")
        ('g', UDouble d) -> signed (showGFloat prec d "")
+       ('f', UFloat d) -> signed (showFFloat prec d "")
+       ('F', UFloat d) -> signed (showFFloat prec d "")
+       ('e', UFloat d) -> signed (showEFloat prec d "")
+       ('g', UFloat d) -> signed (showGFloat prec d "")
        ('f', UInteger n) -> signed (showFFloat prec (fromInteger n :: Double) "")
        _ -> bad
 

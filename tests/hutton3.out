@@ -1,0 +1,32 @@
+hello
+1: * * * * * 
+2: * * * * 
+3: * * * 
+4: * * 
+5: * 
+1: * 
+2: * * 
+How many numbers? The total is 60
+"ac"
+1: * * 
+2: * 
+Player 1
+1: 
+2: * 
+Player 2
+ERROR: Invalid move
+1: 
+2: * 
+Player 2
+Player 2 wins!
+(549946,9)
+([[O,O,B],[X,X,B],[B,B,B]],[[O,X,O],[B,X,B],[B,O,B]])
+([((),"rest")],[])
+[(Bin '-' (Bin '-' (Bin '*' (Num 2) (Bin '^' (Num 3) (Bin '^' (Num 2) (Num 1)))) (Bin '/' (Num 4) (Num 2))) (Num 1),"")]
+14
+5
+512
+7
+unused input: +
+invalid input
+(Just 11,Just 11,PUSH 1 (MARK (PUSH 10 (ADD HALT)) (PUSH 2 FAIL)),Nothing)

@@ -1,0 +1,4 @@
+:l tests/repl/NoMain.hs
+double 21
+safeDiv 7 0
+:t safeDiv

@@ -106,7 +106,11 @@ area (Rect w h) = w * h
 - Use `Maybe` / `Either String` for expected failures, and chain them with
   `do` notation.
 - Use `error "message"` for impossible cases (it stops the program with that
-  message).
+  message, and shows where `error` was called).
+- For errors that the caller should handle, define an exception type:
+  `data ParseError = ParseError String deriving Show`, then
+  `instance Exception ParseError`; raise it with `throwIO`, and handle it with
+  `catch` or `try` (from `Control.Exception`).
 - `head`, `tail`, `!!`, `fromJust` and `Map.!` fail on bad input. Prefer
   pattern matching, `Map.lookup` or `Map.findWithDefault`.
 
@@ -116,6 +120,26 @@ area (Rect w h) = w * h
   `putStrLn (show x)`.
 - `unwords`, `unlines` and `intercalate ", "` join strings.
 - For formatted numbers, use `printf "%.2f\n" x` (from `Text.Printf`).
+
+## Testing with QuickCheck
+
+Write properties as functions that return `Bool`, and let `quickCheck` try
+them on random inputs:
+
+```haskell
+import Test.QuickCheck
+
+prop_reverse :: [Int] -> Bool
+prop_reverse xs = reverse (reverse xs) == xs
+
+main :: IO ()
+main = quickCheck prop_reverse      -- +++ OK, passed 100 tests.
+```
+
+A failing property is reported with a small counterexample. Use `===`
+instead of `==` to see both sides when it fails, `==>` to skip unsuitable
+inputs, and `forAll` with a generator (`choose (1, 6)`, `elements "abc"`) to
+control the inputs.
 
 ## Things you can skip at first
 
@@ -137,5 +161,7 @@ without:
   lists what a module offers.
 - `Debug.Trace.trace "msg" value` prints while evaluating, which is handy for
   debugging pure code.
-- husk's `Int` never overflows (it's arbitrary precision), so a program that
-  relies on overflow behaves differently than with GHC.
+- `husk -l prog.hs` starts the REPL with your file loaded, so you can try its
+  functions (the file doesn't need a `main`).
+- Like GHC's, `Int` is 64 bits and wraps around on overflow; use `Integer`
+  for big numbers.

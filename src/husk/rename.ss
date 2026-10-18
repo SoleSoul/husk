@@ -28,6 +28,10 @@
 (define R-top-types (make-hashtable string-hash string=?))  ; name -> (uname . subs)
 (define R-imp-vals (make-hashtable string-hash string=?))   ; name -> (uname ...)
 (define R-imp-types (make-hashtable string-hash string=?))  ; name -> ((uname . subs) ...)
+;; values imported unqualified from modules other than the Prelude:
+;; name -> ((uname . module) ...).  A top-level definition hides a Prelude
+;; name, but clashes with these (as in GHC).
+(define R-explicit-imp-vals (make-hashtable string-hash string=?))
 (define R-qual-vals (make-hashtable string-hash string=?))  ; "Q.name" -> (uname ...)
 (define R-qual-types (make-hashtable string-hash string=?))
 (define R-mod-exports (make-hashtable string-hash string=?)) ; alias -> list of (kind name entry)
@@ -43,6 +47,7 @@
   (set! R-top-types (make-hashtable string-hash string=?))
   (set! R-imp-vals (make-hashtable string-hash string=?))
   (set! R-imp-types (make-hashtable string-hash string=?))
+  (set! R-explicit-imp-vals (make-hashtable string-hash string=?))
   (set! R-qual-vals (make-hashtable string-hash string=?))
   (set! R-qual-types (make-hashtable string-hash string=?))
   (set! R-mod-exports (make-hashtable string-hash string=?))
@@ -64,6 +69,14 @@
 (define (add-multi! ht key val)
   (let ([old (hashtable-ref ht key '())])
     (unless (member val old) (hashtable-set! ht key (cons val old)))))
+
+(define (check-import-clash loc name u)
+  (let ([others (filter (lambda (c) (not (eq? (car c) u)))
+                        (hashtable-ref R-explicit-imp-vals name '()))])
+    (when (pair? others)
+      (cerror loc "Ambiguous occurrence ‘~a’\nIt could refer to\n   either ‘~a.~a’, imported from ‘~a’\n       or ‘~a.~a’, defined in this module\n(hide the import, e.g. import ~a hiding (~a), or rename your definition)"
+              name (cdar others) name (cdar others) R-mod name (cdar others)
+              (if (or (con-name? name) (char-alphabetic? (string-ref name 0))) name (string-append "(" name ")"))))))
 
 (define (pick loc cands name qual what)
   ;; type entries are (uname . subs): the same type imported through two
@@ -103,7 +116,9 @@
           (or (and (string=? qual R-mod) (hashtable-ref R-top-vals name #f))
               (pick loc (hashtable-ref R-qual-vals (string-append qual "." name) '())
                     name qual (if (con-name? name) "Data constructor" "Variable")))
-          (or (hashtable-ref R-top-vals name #f)
+          (or (let ([u (hashtable-ref R-top-vals name #f)])
+                (when u (check-import-clash loc name u))
+                u)
               (hashtable-ref R-repl-vals name #f)
               (let ([cands (hashtable-ref R-imp-vals name '())])
                 (when (null? cands)
@@ -138,6 +153,25 @@
     u))
 
 (define (con-uname? u) (and (hashtable-ref con-table u #f) #t))
+
+;; In user code, `error` and `undefined` record where they are called, as
+;; GHC's HasCallStack does: the uncaught error shows
+;;   CallStack (from HasCallStack):
+;;     error, called at prog.hs:3:9 in main:Main
+(define (rn-var loc u)
+  (let ([site (lambda (fun)
+                `(lit ,loc string
+                      ,(format "~a, called at ~a in ~a:~a" fun (loc->string loc)
+                               (if (equal? (loc-file loc) "<interactive>") "interactive" "main") R-mod)
+                      ,(box #f)))])
+    (cond
+      [(and (memq u (list (prel "error") (prel "undefined"))) loc (not (library-file? (loc-file loc))))
+       (if (eq? u (prel "error"))
+           (kapp loc (kvar loc (prel "primErrorAt")) (site "error"))
+           (kapp loc (kvar loc (prel "primUndefinedAt")) (site "undefined")))]
+      [else (kvar loc u)])))
+
+(define (library-file? f) (and (string? f) (string-prefix? (lib-dir) f)))
 
 ;;; ------------------------------------------------------------------
 ;;; Imports
@@ -191,7 +225,10 @@
             (lambda (n)
               (when (include-val? n)
                 (let ([u (hashtable-ref vals n #f)])
-                  (unless qualified? (add-multi! R-imp-vals n u))
+                  (unless qualified?
+                    (add-multi! R-imp-vals n u)
+                    (unless (string=? name "Prelude")
+                      (add-multi! R-explicit-imp-vals n (cons u name))))
                   (add-multi! R-qual-vals (string-append alias "." n) u)
                   (record 'val n u))))
             (hashtable-keys vals))
@@ -212,15 +249,18 @@
 
 ;; items: list of operands (already renamed kernel exprs/pats), ('rop loc node uname) and ('neg loc)
 ;; mk-op: (lambda (loc opnode l r) ...)  mk-neg: (lambda (loc e) ...)
+;; (operators are passed around as (fixity name), fixity = (assoc . prec))
 (define (resolve-fixity loc items mk-op mk-neg)
   (define (fix-of it) (op-fixity (cadddr it)))
+  (define (fix-string f)
+    (format "~a ~a" (case (car f) [(left) "infixl"] [(right) "infixr"] [else "infix"]) (cdr f)))
   (define (parse-neg op1 toks)
     (match toks
       [(('neg nloc) . rest)
-       (let ([p1 (cdr op1)])
+       (let ([p1 (cdr (car op1))])
          (unless (< p1 6)
            (cerror nloc "cannot mix prefix '-' with an operator of precedence ~a" p1))
-         (let-values ([(r rest2) (parse-neg '(left . 6) rest)])
+         (let-values ([(r rest2) (parse-neg (list '(left . 6) "-") rest)])
            (parse1 op1 (mk-neg nloc r) rest2)))]
       [(e . rest) (parse1 op1 e rest)]
       [() (cerror loc "missing operand")]))
@@ -228,17 +268,18 @@
     (match toks
       [() (values e1 '())]
       [((and op2 ('rop oloc node u)) . rest)
-       (let* ([f2 (fix-of op2)] [a1 (car op1)] [p1 (cdr op1)] [a2 (car f2)] [p2 (cdr f2)])
+       (let* ([f1 (car op1)] [f2 (fix-of op2)] [a1 (car f1)] [p1 (cdr f1)] [a2 (car f2)] [p2 (cdr f2)])
          (cond
            [(and (= p1 p2) (or (not (eq? a1 a2)) (eq? a1 'none)))
-            (cerror oloc "precedence parsing error: cannot mix operators of the same precedence with different associativity")]
+            (cerror oloc "Precedence parsing error\n    cannot mix ‘~a’ [~a] and ‘~a’ [~a] in the same infix expression"
+                    (cadr op1) (fix-string f1) (uname-base u) (fix-string f2))]
            [(or (> p1 p2) (and (= p1 p2) (eq? a1 'left)))
             (values e1 toks)]
            [else
-            (let-values ([(r rest2) (parse-neg f2 rest)])
+            (let-values ([(r rest2) (parse-neg (list f2 (uname-base u)) rest)])
               (parse1 op1 (mk-op oloc node e1 r) rest2))]))]
       [else (cerror loc "operator expected")]))
-  (let-values ([(e rest) (parse-neg '(none . -1) items)])
+  (let-values ([(e rest) (parse-neg (list '(none . -1) "") items)])
     (unless (null? rest) (cerror loc "operator parse error"))
     e))
 
@@ -506,7 +547,7 @@
 
 (define (rn-exp e env)
   (match e
-    [('var loc q name) (kvar loc (resolve-value loc q name env))]
+    [('var loc q name) (rn-var loc (resolve-value loc q name env))]
     [('con loc q name)
      (let ([u (resolve-value loc q name env)])
        (cond
@@ -1245,6 +1286,15 @@
            [dict (top-uname (format "$f~a~a~a" (uname-base cu) head-name
                                     (format "_~a" R-counter)))]
            [binds (filter (lambda (x) (memq (car x) '(fun patbind))) decls)]
+           [binds (if (and (eq? cu (prel "Exception"))
+                           (not (exists (lambda (b) (and (eq? (car b) 'fun) (equal? (caddr b) "primExceptionTag")))
+                                        binds)))
+                      ;; the tag that identifies the exception type (see Husk.Base)
+                      (cons (s-fun loc "primExceptionTag"
+                                   (list (list (list `(pwild ,loc))
+                                               (s-rhs loc (s-str loc (symbol->string (ktype-head-uname loc ktype)))))))
+                            binds)
+                      binds)]
            [kbinds
             (map (lambda (b)
                    (match b
@@ -1252,13 +1302,22 @@
                       (let ([mu (find (lambda (m) (string=? (uname-base m) mname))
                                       (classinfo-methods ci))])
                         (unless mu
-                          (cerror bloc "'~a' is not a (visible) method of class ~a" mname (uname-base cu)))
+                          (cerror bloc "'~a' is not a (visible) method of class ~a~a" mname (uname-base cu)
+                                  (if (and (string=? mname "fail") (eq? cu (prel "Monad")))
+                                      "\nSince GHC 8.8, fail is a method of MonadFail: define it in\n  instance MonadFail T where fail s = ..."
+                                      "")))
                         (let ([iu (string->symbol (format "~a.~a" dict mname))])
                           (cons mu (car (rn-bindings (list (cons b iu)) '() '())))))]
                      [else (cerror (cadr b) "pattern bindings are not allowed in instance declarations")]))
                  binds)])
       ;; type signatures in instances (InstanceSigs) are accepted and ignored
       `(kinst ,loc ,cu ,kctx ,ktype ,kbinds ,dict))))
+
+(define (ktype-head-uname loc t)
+  (match t
+    [('ta f _) (ktype-head-uname loc f)]
+    [('tc u) u]
+    [else (cerror loc "Illegal instance declaration: the instance head must be a type constructor")]))
 
 (define (ktype-head-name t)
   (match t

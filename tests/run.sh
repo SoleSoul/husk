@@ -1,6 +1,6 @@
 #!/bin/sh
 # Run the husk test suite.
-#   tests/NAME.hs + tests/NAME.out   program and its expected stdout
+#   tests/NAME.hs + tests/NAME.out   program and its expected stdout (also .lhs)
 #   tests/NAME.in                    optional stdin
 #   tests/errors/NAME.hs + NAME.err  program that must fail; .err holds a
 #                                    fragment that must appear in stderr
@@ -10,8 +10,8 @@ cd "$(dirname "$0")/.."
 HUSK=./bin/husk
 pass=0; fail=0
 tmp=$(mktemp)
-for t in tests/*.hs; do
-  base=${t%.hs}
+for t in tests/*.hs tests/*.lhs; do
+  base=${t%.*}
   [ -f "$base.out" ] || continue
   if [ -f "$base.in" ]; then $HUSK "$t" < "$base.in" > "$tmp" 2>&1; else $HUSK "$t" < /dev/null > "$tmp" 2>&1; fi
   if cmp -s "$tmp" "$base.out"; then pass=$((pass+1)); else

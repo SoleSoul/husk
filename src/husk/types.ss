@@ -387,10 +387,21 @@
           (if subst (cons inst subst) (loop (cdr insts)))))))
 
 (define (no-instance-error w t)
-  (let ([names (make-eq-hashtable)])
-    (cerror (wanted-loc w) "No instance for (~a)~a"
-            (pred->string (wanted-class w) t names)
-            (if (wanted-origin w) (format " arising from ~a" (wanted-origin w)) ""))))
+  (let* ([names (make-eq-hashtable)]
+         [ty (type->string t names)]
+         [ty (if (TAp? (prune t)) (string-append "(" ty ")") ty)]
+         [cls (wanted-class w)]
+         [super? (equal? (wanted-origin w) "the superclasses of an instance declaration")])
+    (cerror (wanted-loc w) "No instance for (~a)~a~a"
+            (pred->string cls t names)
+            (if (wanted-origin w) (format " arising from ~a" (wanted-origin w)) "")
+            ;; code written before GHC 7.10 / 8.4 (older books and courses)
+            (cond
+              [(and super? (eq? cls (prel "Semigroup")))
+               (format "\nSince GHC 8.4, a Monoid needs a Semigroup instance. Add:\n  instance Semigroup ~a where\n    (<>) = mappend" ty)]
+              [(and super? (memq cls (list (prel "Applicative") (prel "Functor"))))
+               (format "\nSince GHC 7.10, a Monad needs Functor and Applicative instances. Add:\n  instance Functor ~a where\n    fmap = liftM\n  instance Applicative ~a where\n    pure = return\n    (<*>) = ap\n(liftM and ap are in Control.Monad)" ty ty)]
+              [else ""]))))
 
 ;; Solve what can be solved; return the residual wanteds (headed by metas).
 (define (simplify ws)
@@ -483,9 +494,12 @@
 
 (define (ambiguity-error w)
   (let* ([names (make-eq-hashtable)])
-    (cerror (wanted-loc w) "Ambiguous type variable in the constraint (~a)~a\nProbable fix: add a type annotation, e.g. (... :: Int)"
+    (cerror (wanted-loc w) "Ambiguous type variable in the constraint (~a)~a\nProbable fix: add a type annotation, e.g. ~a"
             (pred->string (wanted-class w) (zonk (wanted-type w)) names)
-            (if (wanted-origin w) (format " arising from ~a" (wanted-origin w)) ""))))
+            (if (wanted-origin w) (format " arising from ~a" (wanted-origin w)) "")
+            (if (eq? (wanted-class w) (prel "Exception"))
+                "\\(e :: SomeException) -> ... for a handler that catches every exception"
+                "(... :: Int)"))))
 
 ;; default the given residual wanteds as far as possible; error on failure
 (define (default-all! ws)
@@ -966,11 +980,14 @@
      (let* ([vars (ktype-vars ktype)]
             [env (map (lambda (v i) (cons v (make-TGen i))) vars (iota (length vars)))]
             [head (ktype->type ktype env loc)]
+            [gnd? (and (pair? kctx) (eq? (car kctx) 'gnd))]
             [ctx (map (lambda (p)
-                        (unless (and (eq? (car (cdr p)) 'tv) (memq (cadr (cdr p)) vars))
+                        ;; (FlexibleContexts: any type over the instance's variables)
+                        (unless (and (pair? (ktype-vars (cdr p)))
+                                     (for-all (lambda (v) (memq v vars)) (ktype-vars (cdr p))))
                           (cerror loc "instance context must constrain the instance's type variables"))
                         (cons (car p) (ktype->type (cdr p) env loc)))
-                      kctx)])
+                      (if gnd? '() kctx))])
        (match ktype
          [('tv _) (cerror loc "instance head must be a type constructor, not a type variable")]
          [else (void)])
@@ -987,12 +1004,72 @@
                  (hashtable-ref instance-table cu '()))
        (let ([inst (make-instinfo cu head ctx dict loc (length vars)
                                   (map (lambda (mb) (cons (car mb) (caddr (cdr mb)))) binds)
-                                  '())])
+                                  '() (and gnd? (cdr kctx)))])
          (hashtable-set! instance-table cu (append (hashtable-ref instance-table cu '()) (list inst)))
          inst))]))
 
+;; The context of a newtype-derived instance C (N a): whatever C R needs
+;; (R the representation type) that can't be solved with instances, such as
+;; (Monad m) for  newtype App m a = App (StateT Int m a) deriving Monad
+(define (infer-gnd-context! ki inst)
+  (match ki
+    [('kinst loc cu kctx ktype binds dict)
+     (let* ([vars (ktype-vars ktype)]
+            [skols (map (lambda (v) (make-TSkol (fresh-id) v)) vars)]
+            [rep (ktype->type (car (instinfo-gnd inst)) (map cons vars skols) loc)]
+            [to-gen (lambda (t) (let sub ([t t])
+                                  (let ([t (prune t)])
+                                    (cond [(memq t skols) (make-TGen (index-of t skols))]
+                                          [(TAp? t) (make-TAp (sub (TAp-fun t)) (sub (TAp-arg t)))]
+                                          [else t]))))])
+       (let loop ([ps (list (cons cu rep))] [ctx '()])
+         (if (null? ps)
+             (instinfo-ctx-set! inst (reverse ctx))
+             (let* ([cls (caar ps)] [t (cdar ps)] [h (type-head t)])
+               (if (TCon? h)
+                   (let ([found (find-instance cls t)])
+                     (unless found
+                       (cerror loc "Can't make a derived instance of ~a ~a: there is no instance ~a ~a"
+                               (uname-base cu) (type->string (inst-type (instinfo-head inst) (list->vector skols)))
+                               (uname-base cls) (type->string t)))
+                     (loop (append (map (lambda (p) (cons (car p) (inst-type (cdr p) (cdr found))))
+                                        (instinfo-ctx (car found)))
+                                   (cdr ps))
+                           ctx))
+                   (let ([p (cons cls (to-gen t))])
+                     (loop (cdr ps) (if (exists (lambda (q) (and (eq? (car q) (car p)) (type-equal? (cdr q) (cdr p)))) ctx)
+                                        ctx
+                                        (cons p ctx)))))))))]))
+
 ;; check the methods of an instance; fills in superclass dictionaries
 (define (tc-instance! ki inst)
+  (if (instinfo-gnd inst)
+      (tc-gnd-instance! ki inst)
+      (tc-plain-instance! ki inst)))
+
+;; a newtype-derived instance: find the representation type's dictionary
+(define (tc-gnd-instance! ki inst)
+  (match ki
+    [('kinst loc cu kctx ktype binds dict)
+     (let* ([vars (ktype-vars ktype)]
+            [skols (list->vector (map (lambda (v) (make-TSkol (fresh-id) v)) vars))]
+            [rep (ktype->type (car (instinfo-gnd inst))
+                              (map (lambda (v i) (cons v (vector-ref skols i))) vars (iota (length vars))) loc)]
+            [ctx-syms (map (lambda (p) (fresh-local (string-append "d" (uname-base (car p))))) (instinfo-ctx inst))]
+            [ctx-givens (map (lambda (p s) (make-given (car p) (inst-type (cdr p) skols) `(dparam ,s)))
+                             (instinfo-ctx inst) ctx-syms)]
+            [saved-givens T-givens] [saved T-wanted])
+       (set! T-givens (append ctx-givens T-givens))
+       (set! T-wanted '())
+       (let ([hole (new-wanted cu rep loc "a derived instance")])
+         (let ([res (simplify T-wanted)])
+           (unless (null? res) (ambiguity-error (car res))))
+         (instinfo-gnd-set! inst hole)
+         (instinfo-supers-set! inst (cons ctx-syms '())))
+       (set! T-wanted saved)
+       (set! T-givens saved-givens))]))
+
+(define (tc-plain-instance! ki inst)
   (match ki
     [('kinst loc cu kctx ktype binds dict)
      (let* ([ci (hashtable-ref class-table cu #f)]
@@ -1066,6 +1143,8 @@
                     (hashtable-set! type-env u (kqual->scheme kqt floc))]))
                foreigns)
      (let ([inst-infos (map register-instance! insts)])
+       (for-each (lambda (ki inst) (when (instinfo-gnd inst) (infer-gnd-context! ki inst)))
+                 insts inst-infos)
        (register-sigs! groups)
        (for-each (lambda (g) (tc-group g #t)) groups)
        (for-each tc-class-defaults! classes)

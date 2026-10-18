@@ -16,7 +16,7 @@ if [ ! -f "$SO" ] || [ -n "$(find "$HUSK_HOME/src" -name '*.ss' -newer "$SO" 2>/
 fi
 
 # Use rlwrap for line editing and history in the REPL when available.
-if [ $# -eq 0 ] && [ -t 0 ] && command -v rlwrap > /dev/null 2>&1 && [ -z "$HUSK_NO_RLWRAP" ]; then
-  exec rlwrap -a -c -H "$HOME/.husk_history" $RUN
+if { [ $# -eq 0 ] || [ "$1" = "-l" ] || [ "$1" = "--load" ]; } && [ -t 0 ] && command -v rlwrap > /dev/null 2>&1 && [ -z "$HUSK_NO_RLWRAP" ]; then
+  exec rlwrap -a -c -H "$HOME/.husk_history" $RUN "$@"
 fi
 exec $RUN "$@"

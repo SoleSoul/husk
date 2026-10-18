@@ -60,9 +60,7 @@ withCurrentDirectory :: FilePath -> IO a -> IO a
 withCurrentDirectory dir action = do
   old <- getCurrentDirectory
   setCurrentDirectory dir
-  r <- action `catch` (\e -> setCurrentDirectory old >> throwIO e)
-  setCurrentDirectory old
-  return r
+  action `finally` setCurrentDirectory old
 
 getHomeDirectory :: IO FilePath
 getHomeDirectory = fmap (maybe "/" id) (lookupEnv "HOME")

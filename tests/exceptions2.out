@@ -1,0 +1,17 @@
+short by 15
+Right 5
+Left Other
+caught: UnknownAccount "bob"
+Just (UnknownAccount "x")
+Nothing
+divide by zero!
+ErrorCall
+io: True
+boom
+True
+"pure"
+Right (-1)
+Left "keep"
+cleanup
+finally saw: InsufficientFunds 1
+husk: UnknownAccount "alice"

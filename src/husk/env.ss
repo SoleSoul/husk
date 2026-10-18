@@ -24,11 +24,14 @@
 ;; arity: how many type arguments the class variable takes (0 for Eq, 1 for Monad)
 
 (define-record-type instinfo
-  (fields class head ctx dict loc nvars (mutable methods) (mutable supers)))
+  (fields class head (mutable ctx) dict loc nvars (mutable methods) (mutable supers)
+          (mutable gnd)))
 ;; head: internal type using TGen for instance type variables
 ;; ctx: list of (class-uname . TGen-type)
 ;; methods: alist method-uname -> implementation uname
 ;; supers: dictionary expressions for the superclasses (set by the typechecker)
+;; gnd: for a newtype-derived instance, (rep-ktype) at first, then the hole of
+;;      the representation type's dictionary, which is reused
 
 (define-record-type modinfo (fields name values types))
 ;; values: hashtable name -> uname

@@ -1,0 +1,5 @@
+husk> Ok, module Main loaded.
+husk> 42
+husk> Nothing
+husk> safeDiv :: Int -> Int -> Maybe Int
+husk> 

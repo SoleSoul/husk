@@ -1,8 +1,7 @@
--- System.IO.Error: IO errors.  husk has a single exception type, so an
--- IOError is a SomeException; these functions recognize IO errors by their
--- messages, which follow GHC's ("todo.txt: openFile: does not exist (...)").
+-- System.IO.Error: IO errors.  The predicates recognize the kind of error
+-- by its message, which follows GHC's ("todo.txt: openFile: does not exist (...)").
 module System.IO.Error (
-  IOError, ioError, userError, catchIOError, tryIOError, isIOError,
+  IOError, ioError, userError, catchIOError, tryIOError,
   isDoesNotExistError, isAlreadyExistsError, isPermissionError, isAlreadyInUseError,
   isEOFError, isUserError, isIllegalOperation,
   ioeGetErrorString, ioeGetFileName
@@ -11,16 +10,13 @@ import Husk.Base
 
 -- catches IO errors only; other exceptions (error, ...) pass through
 catchIOError :: IO a -> (IOError -> IO a) -> IO a
-catchIOError a h = catch a (\e -> if isIOError e then h e else throwIO e)
+catchIOError = catch
 
 tryIOError :: IO a -> IO (Either IOError a)
 tryIOError a = catchIOError (fmap Right a) (return . Left)
 
-isIOError :: SomeException -> Bool
-isIOError e = isUserError e || isEOFError e || isJust (fileError e)
-
 -- "path: who: kind (os message)" -> (path, kind)
-fileError :: SomeException -> Maybe (String, String)
+fileError :: IOError -> Maybe (String, String)
 fileError e = case splitOn' (show e) of
   (path : _ : rest : _) | any (`isPrefixOf` rest) kinds -> Just (path, takeWhile (/= '(') rest)
   _ -> Nothing
@@ -34,7 +30,7 @@ fileError e = case splitOn' (show e) of
     breakSep (':' : ' ' : rest) = ([], Just rest)
     breakSep (c : rest) = let (a, r) = breakSep rest in (c : a, r)
 
-hasKind :: String -> SomeException -> Bool
+hasKind :: String -> IOError -> Bool
 hasKind k e = maybe False ((k `isPrefixOf`) . snd) (fileError e)
 
 isDoesNotExistError, isAlreadyExistsError, isPermissionError, isAlreadyInUseError,

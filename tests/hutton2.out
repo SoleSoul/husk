@@ -1,0 +1,22 @@
+(12,Succ (Succ Zero))
+[True,False,True,True,False]
+(Node (Node (Leaf 1) (Leaf 2)) (Node (Leaf 3) (Node (Leaf 4) (Leaf 5))),True,False)
+(9,3)
+(True,False,True,False)
+[True,True,False]
+(10,20)
+(16,True,False)
+(3*((7*(50-10))-25),49)
+(8500,505)
+[7+((1+10)*(25+50)),10*(1+(7+(25+50))),10*(1+((7+25)+50))]
+BNode (BNode BLeaf 2 BLeaf) 4 BLeaf
+(11,19,12)
+(Z [2,3,4],Z [11,22])
+VAdd (VAdd (VVal 2) (V "y")) (VVal 1)
+BNode (BNode BLeaf ('a',0) BLeaf) ('b',1) (BNode BLeaf ('c',2) BLeaf)
+(Pair ("abcd",[1,2]),Pair ("",[]))
+3!!!
+(3,0,Just Some 3,[Some 1,Some 2])
+(6,[1,2,3],3,Just (BNode (BNode BLeaf 10 BLeaf) 20 (BNode BLeaf 30 BLeaf)))
+([2,4,6,8,10],[1,3])
+([0,1,1,2,3,5,8,13,21,34],BNode (BNode BLeaf 'x' BLeaf) 'x' (BNode BLeaf 'x' BLeaf),1.4142135623746899)

@@ -1,0 +1,21 @@
+((2,"a"),(1,3),(4,8),("5",6))
+([(1,2)],6,Left 4)
+Node {rootLabel = 1, subForest = [Node {rootLabel = 2, subForest = [Node {rootLabel = 4, subForest = []}]},Node {rootLabel = 3, subForest = []}]}
+1
+|
++- 2
+|  |
+|  `- 4
+|
+`- 3
+([1,2,4,3],[[1],[2,3],[4]],10,4,10,False)
+Node {rootLabel = 1, subForest = [Node {rootLabel = 2, subForest = [Node {rootLabel = 4, subForest = []},Node {rootLabel = 5, subForest = []}]},Node {rootLabel = 3, subForest = [Node {rootLabel = 6, subForest = []}]}]}
+(3 :| [1,2],3,[1,2,3],3,3 :| [1,2,4])
+(['a' :| "a",'b' :| "",'c' :| "cc"],Nothing,4 :| [2,3],"abcd")
+(Max {getMax = 7},"ababab")
+([104,195,169,108,108,111],"h\233llo",6)
+(Just 2,"invalid")
+(True,True)
+True
+'a'
+([137,80,78,71,13,10,26,10],[73,72,68,82],32)

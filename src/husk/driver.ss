@@ -4,7 +4,7 @@
 ;;;   source --lex/parse--> surface AST --rename--> kernel --typecheck-->
 ;;;   annotated kernel --codegen--> Scheme forms --eval--> live definitions
 
-(define husk-version "0.1.1")
+(define husk-version "0.2.0")
 (define husk-home (or (getenv "HUSK_HOME") "."))
 (define user-dirs '())         ; where user modules are searched (main file's dir)
 (define dump-scheme? #f)       ; print generated Scheme code
@@ -31,12 +31,25 @@
   (string-append (list->string (map (lambda (c) (if (char=? c #\.) #\/ c)) (string->list name)))
                  ".hs"))
 
+;; Modules are searched for next to the main file, then in the directories
+;; listed in HUSK_PATH (separated by colons), then in husk's library.
+(define (search-dirs)
+  (append user-dirs
+          (let ([p (getenv "HUSK_PATH")])
+            (if p (filter (lambda (d) (not (string=? d ""))) (split-string p #\:)) '()))
+          (list (lib-dir))))
+
+;; A.B.C is found as A/B/C.hs, or A/B/C.lhs (literate Haskell)
 (define (find-module-file name)
   (let ([rel (module-rel-path name)])
-    (let loop ([dirs (append user-dirs (list (lib-dir)))])
-      (cond [(null? dirs) #f]
-            [(file-exists? (string-append (car dirs) "/" rel)) (string-append (car dirs) "/" rel)]
-            [else (loop (cdr dirs))]))))
+    (let loop ([dirs (search-dirs)])
+      (if (null? dirs)
+          #f
+          (let ([hs (string-append (car dirs) "/" rel)]
+                [lhs (string-append (car dirs) "/" (path-root rel) ".lhs")])
+            (cond [(file-exists? hs) hs]
+                  [(file-exists? lhs) lhs]
+                  [else (loop (cdr dirs))]))))))
 
 (define (ensure-module! name loc)
   (unless (hashtable-ref module-table name #f)
@@ -45,7 +58,7 @@
     (let ([file (find-module-file name)])
       (unless file
         (cerror loc "Could not find module ‘~a’\n(searched for ~a in: ~a)" name (module-rel-path name)
-                (string-join (append user-dirs (list (lib-dir))) ", ")))
+                (string-join (search-dirs) ", ")))
       (compile-file! file name))))
 
 (define (eval-forms! forms)
@@ -149,7 +162,10 @@
       (lambda () (set! loading (remove modname loading))))))
 
 (define (compile-file! file expected)
-  (let* ([src (let ([s (read-file-string file)]) (if (eof-object? s) "" s))]
+  (let* ([src (let ([s (read-file-string file)])
+                (cond [(eof-object? s) ""]
+                      [(string=? (path-extension file) "lhs") (unlit s)]
+                      [else s]))]
          [ast (parse-module-string src file)]
          [modname (caddr ast)])
     (when (and expected (not (string=? modname expected)))
@@ -221,7 +237,8 @@
   (let* ([u (global-name modname "main")] [sch (hashtable-ref type-env u #f)])
     (unless sch
       (cerror (make-loc (or (hashtable-ref module-files modname #f) modname) 1 1)
-              "The IO action ‘main’ is not defined in module ‘~a’" modname))
+              "The IO action ‘main’ is not defined in module ‘~a’\n(to try out its functions in the REPL instead, run: husk -l ~a)"
+              modname (or (hashtable-ref module-files modname #f) "FILE.hs")))
     (let-values ([(t preds) (if (Scheme? sch) (instantiate sch) (values sch '()))])
       (unify-at (make-loc (hashtable-ref module-files modname #f) 1 1)
                 (make-TAp (tcon u-io) (new-meta)) t
@@ -235,11 +252,12 @@
   (let ([u (guard (e [(husk-error? e) (report-compile-error e) (exit 1)])
              (let ([modname (compile-file! file #f)])
                (check-main-type! modname)))])
-    (keyboard-interrupt-handler (lambda () (flush-std) (exit 130)))
-    (guard (e [(hs-exit? e) (flush-std) (exit (hs-exit-code e))]
+    (keyboard-interrupt-handler (lambda () (flush-std) (hs-restore-tty) (exit 130)))
+    (guard (e [(hs-exit? e) (flush-std) (hs-restore-tty) (exit (hs-exit-code e))]
               [(broken-pipe? e) (exit 141)]
-              [#t (report-runtime-error e) (exit 1)])
+              [#t (hs-restore-tty) (report-runtime-error e) (exit 1)])
       (hs-run-io (eval u (the-env)))
+      (hs-restore-tty)
       (flush-std)
       (when (getenv "HUSK_STATS") (display-statistics (current-error-port))))))
 
@@ -300,7 +318,9 @@
       sch))
 
 (define (run-io-value u)
-  (hs-run-io (eval u (the-env))))
+  (dynamic-wind void
+                (lambda () (hs-run-io (eval u (the-env))))
+                hs-restore-tty))
 
 (define (repl-eval-expr e)
   ;; first find out whether it is an IO action
@@ -730,12 +750,17 @@
                (loop (cons l acc)))))]
       [else line])))
 
-(define (repl)
+(define (repl . files)
   (printf "husk ~a -- a lightweight Haskell.  :? for help, :q to quit\n" husk-version)
   (init-line-editor!)
   (hs-retain-thunk-code! #t)
   (guard (e [(husk-error? e) (report-compile-error e) (exit 1)])
     (ensure-module! "Prelude" #f))
+  ;; husk -l FILE.hs: start with the file loaded, like ghci FILE.hs
+  (for-each (lambda (f)
+              (guard (e [(husk-error? e) (report-compile-error e)])
+                (repl-handle (string-append ":l " f))))
+            files)
   (let loop ()
     (let ([line (read-repl-input)])
       (unless (eof-object? line)
@@ -764,6 +789,7 @@
 usage:
   husk                     start the interactive REPL
   husk FILE.hs [ARGS...]   compile and run FILE.hs (calls main)
+  husk -l FILE.hs          start the REPL with FILE.hs loaded
   husk -e EXPR             evaluate an expression and print the result
   husk --check FILE.hs     typecheck a file without running it
   husk --scheme FILE.hs    print the generated Scheme code, then run
@@ -787,6 +813,9 @@ usage:
   (install-heap-limit!)
   (cond
     [(null? args) (repl)]
+    [(member (car args) '("-l" "--load"))
+     (when (null? (cdr args)) (display usage) (exit 1))
+     (apply repl (cdr args))]
     [(member (car args) '("-h" "--help")) (display usage)]
     [(member (car args) '("-v" "--version")) (printf "husk ~a\n" husk-version)]
     [(string=? (car args) "-e")

@@ -32,10 +32,10 @@ import Data.Word (Word8)
 infixl 9 !?
 
 w2c :: Word8 -> Char
-w2c w = toEnum (w `mod` 256)
+w2c w = toEnum (fromIntegral w)
 
 c2w :: Char -> Word8
-c2w = fromEnum
+c2w = fromIntegral . fromEnum
 
 p1 :: (Word8 -> a) -> Char -> a
 p1 f = f . c2w

@@ -1,4 +1,6 @@
 caught: divide by zero
 handled: oops
+CallStack (from HasCallStack):
+  error, called at tests/exceptions.hs:7:10 in main:Main
 io: user error (bad)
 42

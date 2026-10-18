@@ -10,6 +10,8 @@ True
 caught: nope.txt: openFile: does not exist (No such file or directory)
 (True,"custom")
 passed through: not an IO error
+CallStack (from HasCallStack):
+  error, called at tests/directory.hs:54:38 in main:Main
 acquire
 release
 user error (inside)

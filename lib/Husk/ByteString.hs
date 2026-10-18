@@ -71,3 +71,23 @@ decodeUtf8 (c : cs)
     go 0 v rest = Just (v, rest)
     go k v (d : rest) | ord d >= 0x80 && ord d < 0xC0 = go (k - 1) (v * 64 + ord d - 0x80) rest
     go _ _ _ = Nothing
+
+-- strict UTF-8 decoding: Nothing for invalid input (bad or missing
+-- continuation bytes, overlong encodings, surrogates, values over 0x10FFFF)
+decodeUtf8Strict :: String -> Maybe String
+decodeUtf8Strict [] = Just []
+decodeUtf8Strict (c : cs)
+  | o < 0x80 = (c :) <$> decodeUtf8Strict cs
+  | o >= 0xC0 && o < 0xE0 = multi 1 (o - 0xC0) 0x80
+  | o >= 0xE0 && o < 0xF0 = multi 2 (o - 0xE0) 0x800
+  | o >= 0xF0 && o < 0xF8 = multi 3 (o - 0xF0) 0x10000
+  | otherwise = Nothing
+  where
+    o = ord c
+    multi n start lo = case go n start cs of
+      Just (v, rest) | v >= lo && v < 0x110000 && not (v >= 0xD800 && v < 0xE000) ->
+        (chr v :) <$> decodeUtf8Strict rest
+      _ -> Nothing
+    go 0 v rest = Just (v, rest)
+    go k v (d : rest) | ord d >= 0x80 && ord d < 0xC0 = go (k - 1) (v * 64 + ord d - 0x80) rest
+    go _ _ _ = Nothing

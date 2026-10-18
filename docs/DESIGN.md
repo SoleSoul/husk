@@ -98,8 +98,10 @@ Haskell values are represented by Scheme values:
 
 | Haskell | Scheme |
 |---------|--------|
-| `Int`, `Integer` | exact integers |
+| `Int`, `Integer` | exact integers (`Int` operations wrap results to 64 bits) |
 | `Double` | flonums |
+| `Float` | flonums rounded to single precision (a `newtype` of `Double`) |
+| `Int8` ... `Word64` | exact integers (`newtype`s of `Integer`, wrapped to their size) |
 | `Rational` | exact rationals |
 | `Char` | characters |
 | `Bool` | `#t` / `#f` |
@@ -113,6 +115,7 @@ Haskell values are represented by Scheme values:
 | `IO a` | procedures of no arguments that perform the action |
 | unevaluated expressions | thunk records |
 | type class dictionaries | vectors of superclass dictionaries and methods |
+| exceptions | Scheme conditions; a payload record tells the Haskell type (see `runtime.ss`) |
 
 The code generator has two modes. Strict mode produces code that evaluates an
 expression to weak head normal form. Lazy mode produces either a value (if
@@ -130,13 +133,20 @@ Dictionary passing would be slow if every `+` looked up a method in a vector,
 so when a dictionary is known at compile time the generator calls the
 instance's method directly. If the method is an alias for a primitive, it
 inlines the primitive. For example, `x + 1` at type `Int` compiles to
-`(+ (force x) 1)`. Primitives are declared in the Haskell library itself:
+`(hs-int-add (force x) 1)`. Primitives are declared in the Haskell library
+itself:
 
 ```haskell
-foreign import prim "+" primIntAdd :: Int -> Int -> Int
+foreign import prim "hs-int-add" primIntAdd :: Int -> Int -> Int
 instance Num Int where
   (+) = primIntAdd
 ```
+
+Because newtypes are erased, a newtype-derived instance
+(`newtype Size = Size Int deriving Num`) is simply the representation type's
+dictionary. User-defined exception types need no `Typeable`: the compiler
+gives each `instance Exception T` a hidden method that returns a tag naming
+`T`, which `fromException` compares.
 
 `do` blocks in `IO` (with a known dictionary) compile to straight-line Scheme:
 `do { x <- getLine; putStrLn x }` becomes, roughly,

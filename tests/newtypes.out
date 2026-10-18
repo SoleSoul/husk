@@ -1,0 +1,10 @@
+(Size 11,Size 55,Size 9)
+3.5
+7
+[0,1,20]
+(42,["hello","world"])
+Wrap [1,2,3]
+([Age 1,Age 2,Age 3],Age 3,5)
+(Both (Just [True]),True)
+T (Just [1,2]) [3]
+True

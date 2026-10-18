@@ -153,3 +153,27 @@
     get-string-all))
 
 (define (hashtable-ref/default ht k d) (hashtable-ref ht k d))
+
+;; Literate Haskell (.lhs): keep the code lines, either "bird tracks"
+;; (lines starting with '>') or lines between \begin{code} and \end{code};
+;; every other line becomes empty, so line numbers stay the same.
+(define (unlit src)
+  (let loop ([lines (string-split-lines src)] [in-code #f] [acc '()])
+    (if (null? lines)
+        (string-join (reverse acc) "\n")
+        (let ([l (car lines)])
+          (cond
+            [(string-prefix? "\\begin{code}" l) (loop (cdr lines) #t (cons "" acc))]
+            [(string-prefix? "\\end{code}" l) (loop (cdr lines) #f (cons "" acc))]
+            [in-code (loop (cdr lines) #t (cons l acc))]
+            [(string-prefix? ">" l)
+             (loop (cdr lines) #f (cons (string-append " " (substring l 1 (string-length l))) acc))]
+            [else (loop (cdr lines) #f (cons "" acc))])))))
+
+(define (string-split-lines s) (split-string s #\newline))
+
+(define (split-string s ch)
+  (let loop ([i 0] [start 0] [acc '()])
+    (cond [(= i (string-length s)) (reverse (cons (substring s start i) acc))]
+          [(char=? (string-ref s i) ch) (loop (+ i 1) (+ i 1) (cons (substring s start i) acc))]
+          [else (loop (+ i 1) start acc)])))

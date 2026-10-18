@@ -6,13 +6,13 @@ type classes with full type inference, laziness, `do` notation, records, list
 comprehensions, and a standard library with `Data.Map`, `Data.Set`,
 `Data.Array`, `Text.Printf`, `Control.Monad.State` and friends.
 
-It is about 7,000 lines of Scheme plus 5,000 lines of Haskell library code. It
+It is about 8,000 lines of Scheme plus 8,000 lines of Haskell library code. It
 runs on [Chez Scheme](https://cisco.github.io/ChezScheme/), a ~10 MB native-code
 Scheme compiler, so it doesn't need GHC's gigabyte-sized toolchain.
 
 ```
 $ husk
-husk 0.1.1 -- a lightweight Haskell.  :? for help, :q to quit
+husk 0.2.0 -- a lightweight Haskell.  :? for help, :q to quit
 husk> let fibs = 0 : 1 : zipWith (+) fibs (tail fibs)
 husk> take 10 fibs
 [0,1,1,2,3,5,8,13,21,34]
@@ -42,6 +42,7 @@ cached in `~/.cache/husk`, so later runs start in about 0.1 s.
 ```
 husk                     start the REPL (like ghci)
 husk prog.hs [args...]   compile and run prog.hs (like runghc)
+husk -l prog.hs          start the REPL with prog.hs loaded (like ghci prog.hs)
 husk -e 'expr'           evaluate an expression
 husk --check prog.hs     typecheck only
 husk --scheme prog.hs    show the generated Scheme code, then run
@@ -54,13 +55,15 @@ and `import` lines work directly at the prompt, as do `x <- action` lines.
 
 A program is an ordinary Haskell module with a `main :: IO ()`. Modules you
 import are looked up next to the main file (`import Utils.Parser` reads
-`Utils/Parser.hs`), then in the standard library (`lib/`).
+`Utils/Parser.hs` or `Utils/Parser.lhs`), then in the directories listed in
+`HUSK_PATH`, then in the standard library (`lib/`).
 
 ### Environment variables
 
 | Variable | Effect |
 |----------|--------|
 | `CHEZ` | the Chez Scheme executable to use |
+| `HUSK_PATH` | more directories to find modules in, separated by colons |
 | `HUSK_MAX_HEAP_MB` | memory limit (default: half of RAM, at most 8 GB) |
 | `HUSK_NO_CACHE=1` | don't use the compiled-code cache |
 | `HUSK_NO_RLWRAP=1`, `HUSK_NO_EDITOR=1` | REPL without rlwrap / without the built-in line editor |
@@ -71,10 +74,15 @@ import are looked up next to the main file (`import Utils.Parser` reads
 In short: the Haskell 2010 language plus the commonly used extensions
 (`LambdaCase`, `MultiWayIf`, `BangPatterns`, `ScopedTypeVariables`,
 `TupleSections`, `RecordWildCards`, `NamedFieldPuns`, `OverloadedStrings`,
-`DeriveFunctor`/`Foldable`/`Traversable`, `BlockArguments`) and a curated
-`base` with the usual containers (`Data.Map`, `Data.Set`, `Data.Sequence`,
-arrays, ...). Not supported: GADTs, type families, multi-parameter classes,
-rank-N types, Template Haskell.
+`DeriveFunctor`/`Foldable`/`Traversable`, `GeneralizedNewtypeDeriving`,
+`BlockArguments`), and husk's own versions of the libraries learners use:
+`base`, `containers`, `array`, `mtl`, `text`, `bytestring`, `random`,
+`QuickCheck` and a few more. Not supported: GADTs, type families,
+multi-parameter classes, rank-N types, Template Haskell.
+
+husk runs the exercises of *Learn You a Haskell*, Hutton's *Programming in
+Haskell*, the CIS 194 course, the Helsinki Haskell MOOC and the H-99
+problems: see [docs/LEARNING.md](docs/LEARNING.md).
 
 See [docs/LANGUAGE.md](docs/LANGUAGE.md) for the full list of language
 features and library modules, and for where husk differs from GHC.
@@ -116,8 +124,9 @@ docs/               language reference and design notes
 tests/run.sh
 ```
 
-runs every `tests/*.hs` and compares its output with the matching `.out`
-file, and checks that each `tests/errors/*.hs` fails with the expected message.
+runs every `tests/*.hs` (and `.lhs`) and compares its output with the
+matching `.out` file, checks that each `tests/errors/*.hs` fails with the
+expected message, and runs the REPL sessions in `tests/repl/`.
 
 ## License
 

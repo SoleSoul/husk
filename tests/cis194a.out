@@ -1,0 +1,24 @@
+([1,2,3,4],[4,3,2,1],[],[])
+([16,7,12,5],[1,4,3])
+(22,True,False)
+([("a","c"),("a","b"),("c","b")],32767,129)
+(LogMessage (Error 2) 562 "help help",LogMessage Info 29 "la la la",Unknown "This is not in the right format")
+["Way too many pickles","Bad pickle-flange interaction detected","Flange failed!"]
+(["ABCD","BD","C","D"],["hello!","el!","l!","l","o","!"],[[1]],[[True,False],[False]],[])
+([9,6],[4],[])
+    *     
+    *     
+    * *   
+ ******  *
+==========
+0123456789
+(0,81178)
+(3,True)
+(True,[2,4,6],4,[3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97,101])
+(20,Just 20,Just 14,Nothing)
+(Just (-7),Just True,Just (MinMax 5),Just (Mod7 0))
+(Just [PushI 3,PushI (-4),SMul,PushI 5,SAdd],Just (Just (-7)))
+(Just 9,Nothing)
+VAdd (VLit 3) (Var "x")
+([0,1,1,2,3,5,8,13,21,34,55,89,144,233,377],[0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2],[0,1,1,2,3,5,8,13,21,34,55,89,144,233,377,610,987,1597,2584,4181])
+([0,1,1,2,3,5,8,13,21,34,55,89,144,233,377,610,987,1597,2584,4181,6765],280571172992510140037611932413038677189525)

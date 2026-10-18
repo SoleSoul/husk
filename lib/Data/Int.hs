@@ -1,9 +1,6 @@
--- Data.Int: sized integer types.  In husk these are all synonyms for Int
--- (arbitrary precision, no wrap-around on overflow).
+-- Data.Int: signed integer types, which wrap around on overflow.
+-- (Int64 is the same type as Int.)
 module Data.Int (Int, Int8, Int16, Int32, Int64) where
 import Husk.Base
 
-type Int8 = Int
-type Int16 = Int
-type Int32 = Int
 type Int64 = Int

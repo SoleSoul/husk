@@ -1,0 +1,23 @@
++++ OK, passed 100 tests.
++++ OK, passed 100 tests.
+True
++++ OK, passed 100 tests.
++++ OK, passed 100 tests.
++++ OK, passed 100 tests.
++++ OK, passed 100 tests.
++++ OK, passed 500 tests.
++++ OK, passed 100 tests.
++++ OK, passed 100 tests.
++++ OK, passed 100 tests.
++++ OK, passed 1 test.
++++ OK, passed 1 test.
++++ OK, passed 1 test.
+*** Failed! Falsified (after 1 test):
+4 /= 5
+*** Failed! Falsified (after 1 test):
+10
+[0,0,0]
+8
+"z"
+False
+(11,True)

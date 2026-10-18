@@ -13,6 +13,8 @@
    ;; errors
    hs-error hs-error-hs hs-exception? hs-exception-payload hs-exception-message
    make-hs-exception hs-exit? hs-exit-code make-hs-exit hs-pattern-fail
+   hs-exception-kind hs-exception-match hs-make-typed hs-make-error-call hs-make-io-error
+   hs-make-arith hs-raise hs-throw-io hs-error-at hs-undefined-at hs-error-call-message
    ;; lists and strings
    hs->string string->hs hs-list->list hs-string-equal? hs-force-list
    ;; misc
@@ -23,12 +25,15 @@
    hs-show-double hs-show-rational hs-int-pow hs-truncate hs-round hs-ceiling hs-floor
    hs-to-double hs-from-rational hs-numerator hs-denominator hs-make-ratio
    hs-decode-double hs-show-ffloat hs-show-efloat hs-show-hex hs-show-oct
+   hs-float32 hs-show-float hs-crc32 hs-adler32
+   hs-set-tty-mode hs-restore-tty
    hs-is-nan hs-is-infinite hs-int-to-char hs-gcd hs-lcm
    hs-shift-l hs-shift-r hs-test-bit hs-pop-count hs-xor hs-and hs-or hs-complement
    hs-int-max hs-int-min hs-sqrt hs-exp hs-log hs-sin hs-cos hs-tan hs-asin hs-acos
    hs-atan hs-sinh hs-cosh hs-tanh hs-asinh hs-acosh hs-atanh hs-pow-double hs-atan2
    hs-int-eq hs-int-lt hs-int-le hs-int-gt hs-int-ge hs-compare
    hs-int-add hs-int-sub hs-int-mul hs-negate hs-abs hs-signum
+   hs-int64 hs-int-negate hs-int-abs hs-int-shift-l hs-int-pop-count hs-wrap-bits
    hs-dbl-add hs-dbl-sub hs-dbl-mul hs-dbl-div hs-dbl-eq hs-dbl-lt hs-dbl-le
    ;; show / read
    hs-show-char hs-show-string hs-reads-integer hs-reads-double hs-reads-char hs-lines hs-words
@@ -166,11 +171,26 @@
   ;;; ----------------------------------------------------------------
   ;;; Exceptions
 
-  ;; payload: a Scheme string (error calls) or a Haskell value
+  ;; An exception's payload says which Haskell exception type it has:
+  ;;   a string          ErrorCall (failed patterns, errors in the library)
+  ;;   (hs-errcall ...)  ErrorCall from `error` or `undefined` in user code,
+  ;;                     with GHC's call-stack line ("error, called at ...")
+  ;;   (hs-ioe msg)      IOException
+  ;;   (hs-arith msg)    ArithException
+  ;;   (hs-typed ...)    a value of a user-defined Exception instance, with the
+  ;;                     instance's type tag and the value's `show` (a Haskell
+  ;;                     String, computed when needed)
+  ;; Other Scheme conditions are exceptions too (shown by their message).
   (define-record-type hs-exception (fields payload))
   (define-record-type hs-exit (fields code))
+  (define-record-type hs-errcall (fields msg loc))
+  (define-record-type hs-ioe (fields msg))
+  (define-record-type hs-arith (fields msg))
+  (define-record-type hs-typed (fields tag shown value))
 
   (define (hs-error msg) (raise (make-hs-exception msg)))
+  (define (hs-io-error msg) (raise (make-hs-exception (make-hs-ioe msg))))
+  (define (hs-arith-error msg) (raise (make-hs-exception (make-hs-arith msg))))
   (define (hs-error-hs s) (raise (make-hs-exception (hs->string s))))
   (define (hs-error-call s) (hs-error-hs s))
   (define (hs-pattern-fail msg) (hs-error msg))
@@ -178,7 +198,42 @@
 
   (define (hs-exception-message e)
     (let ([p (hs-exception-payload e)])
-      (if (string? p) p (format "~a" p))))
+      (cond [(string? p) p]
+            [(hs-errcall? p)
+             (string-append (hs-errcall-msg p) "\nCallStack (from HasCallStack):\n  " (hs-errcall-loc p))]
+            [(hs-ioe? p) (hs-ioe-msg p)]
+            [(hs-arith? p) (hs-arith-msg p)]
+            [(hs-typed? p) (hs->string (hs-typed-shown p))]
+            [else (format "~a" p)])))
+
+  ;; 0 ErrorCall, 1 IOException, 2 ArithException, 3 user-defined, 4 other
+  (define (hs-exception-kind e)
+    (if (hs-exception? e)
+        (let ([p (hs-exception-payload e)])
+          (cond [(or (string? p) (hs-errcall? p)) 0] [(hs-ioe? p) 1] [(hs-arith? p) 2] [(hs-typed? p) 3] [else 4]))
+        4))
+
+  ;; Just the value, if e holds a value of the type with this tag
+  (define (hs-exception-match tag e)
+    (let ([p (and (hs-exception? e) (hs-exception-payload e))])
+      (if (and (hs-typed? p) (string=? (hs-typed-tag p) (hs->string tag)))
+          (vector 1 (hs-typed-value p))
+          (vector 0))))
+
+  ;; (lazy arguments)
+  (define (hs-make-typed tag shown value)
+    (make-hs-exception (make-hs-typed (hs->string tag) shown value)))
+  (define (hs-make-error-call s) (make-hs-exception (hs->string s)))
+  (define (hs-make-io-error s) (make-hs-exception (make-hs-ioe (hs->string s))))
+  (define (hs-make-arith s) (make-hs-exception (make-hs-arith (hs->string s))))
+  (define (hs-raise e) (raise e))
+  (define (hs-error-at loc s) (raise (make-hs-exception (make-hs-errcall (hs->string s) (hs->string loc)))))
+  (define (hs-undefined-at loc) (raise (make-hs-exception (make-hs-errcall "Prelude.undefined" (hs->string loc)))))
+  ;; the message of an ErrorCall, without the call stack
+  (define (hs-error-call-message e)
+    (let ([p (hs-exception-payload e)])
+      (string->list (if (hs-errcall? p) (hs-errcall-msg p) (hs-exception-message e)))))
+  (define (hs-throw-io e) (lambda () (raise e)))
 
   (define (hs-trace s x)
     (let ([p (current-error-port)])
@@ -247,7 +302,7 @@
   ;;; ----------------------------------------------------------------
   ;;; Numbers
 
-  (define (div0-check d) (when (eqv? d 0) (hs-error "divide by zero")))
+  (define (div0-check d) (when (eqv? d 0) (hs-arith-error "divide by zero")))
   (define (hs-quot n d) (div0-check d) (quotient n d))
   (define (hs-rem n d) (div0-check d) (remainder n d))
   (define (hs-mod n d) (div0-check d) (modulo n d))
@@ -271,9 +326,26 @@
   (define (hs-int-le a b) (<= a b))
   (define (hs-int-gt a b) (> a b))
   (define (hs-int-ge a b) (>= a b))
-  (define (hs-int-add a b) (+ a b))
-  (define (hs-int-sub a b) (- a b))
-  (define (hs-int-mul a b) (* a b))
+  ;; Int is 64-bit two's complement: results wrap around like GHC's.
+  ;; (Fixnums are 61-bit, so they never need wrapping.)
+  (define (hs-int64 n)
+    (if (fixnum? n)
+        n
+        (let ([m (bitwise-and n #xFFFFFFFFFFFFFFFF)])
+          (if (bitwise-bit-set? m 63) (- m #x10000000000000000) m))))
+  (define (hs-int-add a b) (hs-int64 (+ a b)))
+  (define (hs-int-sub a b) (hs-int64 (- a b)))
+  (define (hs-int-mul a b) (hs-int64 (* a b)))
+  (define (hs-int-negate a) (hs-int64 (- a)))
+  (define (hs-int-abs a) (hs-int64 (abs a)))
+  (define (hs-int-shift-l x n) (hs-int64 (bitwise-arithmetic-shift-left x (min n 64))))
+  (define (hs-int-pop-count x) (bitwise-bit-count (bitwise-and x #xFFFFFFFFFFFFFFFF)))
+  ;; the sized types (Int8 ... Word64): keep the low `bits` bits
+  (define (hs-wrap-bits bits signed x)
+    (let ([m (bitwise-and x (- (bitwise-arithmetic-shift-left 1 bits) 1))])
+      (if (and signed (bitwise-bit-set? m (- bits 1)))
+          (- m (bitwise-arithmetic-shift-left 1 bits))
+          m)))
   (define (hs-negate a) (- a))
   (define (hs-abs a) (abs a))
   (define (hs-signum a) (cond [(and (flonum? a) (flnan? a)) a]
@@ -295,7 +367,7 @@
   (define (hs-numerator x) (numerator x))
   (define (hs-denominator x) (denominator x))
   (define (hs-make-ratio n d)
-    (when (eqv? d 0) (hs-error "Ratio has zero denominator"))
+    (when (eqv? d 0) (hs-arith-error "Ratio has zero denominator"))
     (/ n d))
 
   (define (check-finite who x)
@@ -356,6 +428,7 @@
 
   ;; Haskell's show for Double: shortest digits that round-trip, written in
   ;; fixed notation when 0.1 <= |x| < 10^7, otherwise in scientific notation.
+  (define (float-digits* x) (float-digits x))
   (define (float-digits x)
     ;; x > 0, finite.  returns (digit-string . e) with x = 0.d1d2... * 10^e
     (let* ([s (number->string x)]
@@ -381,14 +454,64 @@
                   (tloop (substring d 0 (- (string-length d) 1)))
                   (cons d e)))))))
 
-  (define (hs-show-double-string x)
+  ;; checksums of byte strings (Haskell Strings of chars below 256), for PNG files
+  (define crc-table
+    (let ([t (make-vector 256)])
+      (do ([n 0 (+ n 1)]) ((= n 256) t)
+        (vector-set! t n
+          (let loop ([c n] [k 0])
+            (if (= k 8) c
+                (loop (if (odd? c) (bitwise-xor #xEDB88320 (bitwise-arithmetic-shift-right c 1))
+                          (bitwise-arithmetic-shift-right c 1))
+                      (+ k 1))))))))
+  (define (hs-crc32 s)
+    (let loop ([s (force s)] [c #xFFFFFFFF])
+      (if (pair? s)
+          (loop (force (cdr s))
+                (bitwise-xor (vector-ref crc-table (bitwise-and (bitwise-xor c (char->integer (force (car s)))) 255))
+                             (bitwise-arithmetic-shift-right c 8)))
+          (bitwise-xor c #xFFFFFFFF))))
+  (define (hs-adler32 s)
+    (let loop ([s (force s)] [a 1] [b 0])
+      (if (pair? s)
+          (let ([a (mod (+ a (char->integer (force (car s)))) 65521)])
+            (loop (force (cdr s)) a (mod (+ b a) 65521)))
+          (+ (* b 65536) a))))
+
+  ;; Float is single precision: a double rounded to the nearest float32
+  (define f32-buffer (make-bytevector 4))
+  (define (hs-float32 x)
+    (bytevector-ieee-single-native-set! f32-buffer 0 x)
+    (bytevector-ieee-single-native-ref f32-buffer 0))
+
+  ;; like float-digits, for a float32 value: the shortest digits that read
+  ;; back as the same float32
+  (define (float32-digits x)
+    (let ([e (cdr (float-digits x))] [ex (exact x)])
+      (let loop ([p 1])
+        (let* ([n (round (/ ex (expt 10 (- e p))))]
+               [cand (* n (expt 10 (- e p)))])
+          (if (or (fl= (hs-float32 (inexact cand)) x) (>= p 9))
+              (let* ([s (number->string n)]
+                     [e (+ e (- (string-length s) p))])   ; rounded up to 10^p
+                (let strip ([s s])
+                  (if (and (> (string-length s) 1) (char=? (string-ref s (- (string-length s) 1)) #\0))
+                      (strip (substring s 0 (- (string-length s) 1)))
+                      (cons s e))))
+              (loop (+ p 1)))))))
+
+  (define (hs-show-float x) (string->list (show-float-string x float32-digits)))
+
+  (define (hs-show-double-string x) (show-float-string x float-digits))
+
+  (define (show-float-string x digits)
     (cond
       [(flnan? x) "NaN"]
       [(flinfinite? x) (if (fl> x 0.0) "Infinity" "-Infinity")]
       [(fl= x 0.0) (if (eqv? x -0.0) "-0.0" "0.0")]
-      [(fl< x 0.0) (string-append "-" (hs-show-double-string (fl- x)))]
+      [(fl< x 0.0) (string-append "-" (show-float-string (fl- x) digits))]
       [else
-       (let* ([de (float-digits x)] [ds (car de)] [e (cdr de)])
+       (let* ([de (digits x)] [ds (car de)] [e (cdr de)])
          (if (and (>= x 0.1) (< x 1e7))
              (cond
                [(<= e 0) (string-append "0." (make-string (- e) #\0) ds)]
@@ -406,7 +529,9 @@
                                  (number->string (denominator x)))))
 
   ;; showFFloat (Just d) x: fixed notation with d decimals; d < 0 means "all"
-  (define (hs-show-ffloat d x)
+  ;; (as many digits as show uses; negative single? for a Float)
+  (define (hs-show-ffloat d single? x)
+    (define float-digits (if single? float32-digits float-digits*))
     (string->list
      (cond
        [(flnan? x) "NaN"]
@@ -435,7 +560,8 @@
           (string-append (if (and neg (not (= scaled 0))) "-" "")
                          ip (if (= d 0) "" ".") fp))])))
 
-  (define (hs-show-efloat d x)
+  (define (hs-show-efloat d single? x)
+    (define float-digits (if single? float32-digits float-digits*))
     (string->list
      (cond
        [(flnan? x) "NaN"]
@@ -652,7 +778,7 @@
   (define (hs-io-bind m k) (lambda () ((ap1 (force k) ((force m))))))
   (define (hs-io-then m k) (lambda () ((force m)) ((force k))))
   (define (hs-run-io m) ((force m)))
-  (define (hs-unsafe-perform-io m) ((force m)))
+  (define (hs-unsafe-perform-io m) (force ((force m))))   ; (the result may be a thunk)
   (define (hs-io-fix f)
     ;; fixIO
     (lambda ()
@@ -665,6 +791,23 @@
   (define hs-stdout (delay-hs (current-output-port)))
   (define hs-stderr (delay-hs (current-error-port)))
   (define hs-stdin (delay-hs (current-input-port)))
+
+  ;; Terminal modes for hSetEcho stdin False and hSetBuffering stdin
+  ;; NoBuffering, set with stty when stdin is a terminal.  hs-restore-tty
+  ;; undoes them when the program ends.
+  (define tty-changed #f)
+  (define (stdin-tty?) (= 0 (system "test -t 0")))
+  (define (hs-set-tty-mode h which on)
+    (lambda ()
+      (when (and (eq? h (current-input-port)) (stdin-tty?))
+        (set! tty-changed #t)
+        (system (string-append "stty " (if on "" "-")
+                               (if (= which 0) "echo" "icanon min 1"))))
+      'unit))
+  (define (hs-restore-tty)
+    (when tty-changed
+      (set! tty-changed #f)
+      (system "stty echo icanon")))
 
   (define (write-hs-string port s)
     (let loop ([s (force s)])
@@ -685,13 +828,22 @@
       (if (input-port? h) (close-input-port h) (close-output-port h))
       'unit))
 
-  (define (eof-error) (hs-error "Prelude.getLine: end of file"))
+  ;; as GHC shows it: "<stdin>: hGetLine: end of file"
+  (define (eof-error port who)
+    (hs-io-error (format "~a: ~a: end of file" (handle-name port) who)))
+  (define (string-prefix-ci? p s)
+    (and (<= (string-length p) (string-length s)) (string-ci=? p (substring s 0 (string-length p)))))
+  (define (handle-name port)
+    (let ([n (port-name port)])
+      (cond [(and (string? n) (string-prefix-ci? "stdin" n)) "<stdin>"]
+            [(string? n) n]
+            [else "<handle>"])))
 
   (define (read-line-from port)
     (flush-output-port (current-output-port))
     (let ([l (get-line port)])
       (if (eof-object? l)
-          (eof-error)
+          (eof-error port "hGetLine")
           ;; drop a trailing CR (files with Windows line endings)
           (let ([n (string-length l)])
             (string->list (if (and (> n 0) (char=? (string-ref l (- n 1)) #\return))
@@ -704,7 +856,7 @@
     (lambda ()
       (flush-output-port (current-output-port))
       (let ([c (read-char (current-input-port))])
-        (if (eof-object? c) (hs-error "Prelude.getChar: end of file") c))))
+        (if (eof-object? c) (eof-error (current-input-port) "hGetChar") c))))
 
   ;; Lazily read a port.  Input is read in chunks (a line at a time from a
   ;; terminal); only the end of each chunk is lazy.
@@ -768,7 +920,7 @@
                                   (guard (_ [#t (condition-message e)])
                                     (apply format (condition-message e) irr))
                                   "IO error"))])
-                 (hs-error (format "~a: ~a: ~a (~a)" path who (os-error-kind os) os)))])
+                 (hs-io-error (format "~a: ~a: ~a (~a)" path who (os-error-kind os) os)))])
       (thunk)))
 
   (define (os-error-kind os)
@@ -901,7 +1053,7 @@
           (lambda () ((force action))))))))
 
   (define (hs-evaluate x) (lambda () (force x)))
-  (define (hs-throw-error s) (lambda () (hs-error-hs s)))
+  (define (hs-throw-error s) (lambda () (hs-io-error (hs->string s))))
 
   ;;; ----------------------------------------------------------------
   ;;; Arrays: immutable Scheme vectors of (lazy) elements

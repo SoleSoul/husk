@@ -40,7 +40,7 @@
 (define (s-member? x s) (or (eq? s 'all) (memq x s)))
 (define (s-remove s vars) (if (eq? s 'all) 'all (filter (lambda (x) (not (memq x vars))) s)))
 
-(define (error-prim? sname) (memq sname '(hs-error-hs hs-error hs-undefined)))
+(define (error-prim? sname) (memq sname '(hs-error-hs hs-error hs-undefined hs-raise hs-error-at hs-undefined-at)))
 
 ;; strictness of a callee as determined by codegen's var-callee
 (define (callee-strictness callee)

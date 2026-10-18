@@ -11,15 +11,14 @@ import Husk.Base
 foreign import prim "hs-system-time" primSystemTime :: IO Double
 
 class RandomGen g where
-  -- a uniformly distributed 64-bit word, as a non-negative Int
-  genWord64 :: g -> (Int, g)
+  genWord64 :: g -> (Word64, g)
   split :: g -> (g, g)
   next :: g -> (Int, g)
   genRange :: g -> (Int, Int)
-  next g = let (w, g') = genWord64 g in (toSigned w, g')
+  next g = let (w, g') = genWord64 g in (fromIntegral w, g')
   genRange _ = (minBound, maxBound)
 
-data StdGen = StdGen Int Int   -- seed, gamma (odd)
+data StdGen = StdGen Word64 Word64   -- seed, gamma (odd)
 
 instance Show StdGen where
   showsPrec d (StdGen s g) = showParen (d > 10)
@@ -29,14 +28,14 @@ instance Eq StdGen where
   StdGen a b == StdGen c d = a == c && b == d
 
 instance RandomGen StdGen where
-  genWord64 (StdGen seed gamma) = let seed' = plus seed gamma in (mix64 seed', StdGen seed' gamma)
+  genWord64 (StdGen seed gamma) = let seed' = seed + gamma in (mix64 seed', StdGen seed' gamma)
   split (StdGen seed gamma) =
-    let seed' = plus seed gamma
-        seed'' = plus seed' gamma
+    let seed' = seed + gamma
+        seed'' = seed' + gamma
     in (StdGen seed'' gamma, StdGen (mix64 seed') (mixGamma seed''))
 
 mkStdGen :: Int -> StdGen
-mkStdGen n = let s = n `mod` two64 in StdGen (mix64 s) (mixGamma (plus s goldenGamma))
+mkStdGen n = let s = fromIntegral n in StdGen (mix64 s) (mixGamma (s + goldenGamma))
 
 -- a generator seeded from the clock
 initStdGen :: IO StdGen
@@ -45,37 +44,24 @@ initStdGen = do
   c <- getCPUTime
   return (mkStdGen (truncate (t * 1000000) `xor` fromInteger c))
 
--- SplitMix64 arithmetic on Ints in [0, 2^64)
-two64 :: Int
-two64 = 18446744073709551616
-
-plus :: Int -> Int -> Int
-plus a b = (a + b) `mod` two64
-
-times :: Int -> Int -> Int
-times a b = (a * b) `mod` two64
-
-shiftXor :: Int -> Int -> Int
+-- SplitMix64 (Word64 arithmetic wraps around)
+shiftXor :: Int -> Word64 -> Word64
 shiftXor n w = w `xor` (w `shiftR` n)
 
-goldenGamma :: Int
+goldenGamma :: Word64
 goldenGamma = 0x9e3779b97f4a7c15
 
-mix64 :: Int -> Int
-mix64 z = shiftXor 33 (times (shiftXor 33 (times (shiftXor 33 z) 0xff51afd7ed558ccd)) 0xc4ceb9fe1a85ec53)
+mix64 :: Word64 -> Word64
+mix64 z = shiftXor 33 (shiftXor 33 (shiftXor 33 z * 0xff51afd7ed558ccd) * 0xc4ceb9fe1a85ec53)
 
-mix64variant13 :: Int -> Int
-mix64variant13 z = shiftXor 31 (times (shiftXor 27 (times (shiftXor 30 z) 0xbf58476d1ce4e5b9)) 0x94d049bb133111eb)
+mix64variant13 :: Word64 -> Word64
+mix64variant13 z = shiftXor 31 (shiftXor 27 (shiftXor 30 z * 0xbf58476d1ce4e5b9) * 0x94d049bb133111eb)
 
-mixGamma :: Int -> Int
+mixGamma :: Word64 -> Word64
 mixGamma z =
   let z' = mix64variant13 z .|. 1
       n = popCount (z' `xor` (z' `shiftR` 1))
   in if n >= 24 then z' else z' `xor` 0xaaaaaaaaaaaaaaaa
-
--- a 64-bit word as a two's complement Int64
-toSigned :: Int -> Int
-toSigned w = if w >= 9223372036854775808 then w - two64 else w
 
 -- uniform in [0, r]: take enough 64-bit words, mask, and reject values above r
 uniformUpTo :: RandomGen g => Integer -> g -> (Integer, g)
@@ -108,19 +94,25 @@ integralR (lo, hi) g
   | otherwise = let (x, g') = uniformUpTo (toInteger hi - toInteger lo) g
                 in (fromInteger (toInteger lo + x), g')
 
--- Int is unbounded in husk; random picks from the 64-bit range like GHC
 instance Random Int where
   randomR = integralR
-  random g = let (w, g') = genWord64 g in (toSigned w, g')
+  random g = let (w, g') = genWord64 g in (fromIntegral w, g')
 
 instance Random Integer where
   randomR = integralR
-  random g = let (w, g') = genWord64 g in (toInteger (toSigned w), g')
+  random g = let (w, g') = genWord64 g in (toInteger (fromIntegral w :: Int), g')
+
+instance Random Word8 where { randomR = integralR; random = randomR (minBound, maxBound) }
+instance Random Word where { randomR = integralR; random = randomR (minBound, maxBound) }
 
 instance Random Double where
   randomR (l, h) g
     | l == h = (l, g)
     | otherwise = let (x, g') = uniformDouble01 g in (x * l + (1 - x) * h, g')
+  random = randomR (0, 1)
+
+instance Random Float where
+  randomR (l, h) g = let (x, g') = randomR (realToFrac l :: Double, realToFrac h) g in (realToFrac x, g')
   random = randomR (0, 1)
 
 instance Random Bool where

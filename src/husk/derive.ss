@@ -23,27 +23,34 @@
 (define (vars-named prefix n)
   (map (lambda (i) (format "~a~a" prefix (+ i 1))) (iota n)))
 
-;; Which type variables of a data type need a class constraint in a derived
-;; instance?  Those used as (part of) a field type at kind *.
-(define (constrained-tyvars di)
-  (let ([used '()] [heads '()])
-    (define (walk t arg?)
+;; The types that need a class constraint in a derived instance: type
+;; variables used as (part of) a field type at kind *, and applications of
+;; a type variable, as in  newtype Compose f g a = Compose (f (g a)),
+;; which gets the context (Show (f (g a))).  Instances for type
+;; constructors are assumed to need the same class for their arguments.
+(define (derived-context-types di)
+  (let ([acc '()])
+    (define (add! t) (unless (member t acc) (set! acc (cons t acc))))
+    (define (walk t)
       (match t
-        [('tv v) (when arg? (set! used (cons v used)))]
+        [('tv v) (add! t)]
         [('tc _) (void)]
         [('ta f x)
-         (let loop ([f f])
-           (match f
-             [('tv v) (set! heads (cons v heads))]
-             [('ta g y) (walk y #t) (loop g)]
-             [else (void)]))
-         (walk x #t)]))
+         (if (tv-headed? f)
+             (add! t)
+             (begin (walk-fun f) (walk x)))]))
+    (define (walk-fun f)
+      (match f
+        [('ta g y) (walk-fun g) (walk y)]
+        [else (void)]))
+    (define (tv-headed? f)
+      (match f [('tv _) #t] [('ta g _) (tv-headed? g)] [else #f]))
     (for-each (lambda (cu)
-                (for-each (lambda (t) (walk t #t))
-                          (coninfo-ktypes (hashtable-ref con-table cu #f))))
+                (for-each walk (coninfo-ktypes (hashtable-ref con-table cu #f))))
               (datainfo-cons di))
-    (filter (lambda (v) (and (memq v used) (not (memq v heads))))
-            (datainfo-tyvars di))))
+    ;; type variables first, in declaration order
+    (append (filter-map (lambda (v) (and (member `(tv ,v) acc) `(tv ,v))) (datainfo-tyvars di))
+            (filter (lambda (t) (not (eq? (car t) 'tv))) (reverse acc)))))
 
 (define (data-ktype di)
   (fold-left (lambda (f v) `(ta ,f (tv ,v))) `(tc ,(datainfo-name di)) (datainfo-tyvars di)))
@@ -64,13 +71,62 @@
             [di (hashtable-ref data-table tu #f)])
        (derive-instance loc di (resolve-class loc q cname)))]))
 
+(define stock-classes '("Eq" "Ord" "Show" "Read" "Enum" "Bounded" "Ix" "Functor" "Foldable" "Traversable"))
+
 (define (derive-instance loc di cu)
+  (cond
+    ;; like DeriveAnyClass: an instance with the default methods
+    [(eq? cu (prel "Exception")) `(instance-k ,loc () ,cu ,(data-ktype di) ())]
+    ;; a newtype reuses its representation's instance (as GHC does with
+    ;; GeneralizedNewtypeDeriving), except for Show and Read
+    [(and (datainfo-newtype? di) (not (member (uname-base cu) '("Show" "Read"))))
+     (or (derive-newtype-instance loc di cu (member (uname-base cu) stock-classes))
+         (derive-stock-instance loc di cu))]
+    [else (derive-stock-instance loc di cu)]))
+
+;; GeneralizedNewtypeDeriving: newtype N a = MkN (R a) deriving C  reuses
+;; the instance C R (newtypes are erased at run time, so its dictionary
+;; works for N too).  The typechecker infers the instance context.
+;; Returns #f, if `fallback?`, when the representation can't be eta-reduced.
+(define (derive-newtype-instance loc di cu fallback?)
+  (let* ([k (class-type-arity cu)]
+         [vs (datainfo-tyvars di)]
+         [ci (hashtable-ref con-table (car (datainfo-cons di)) #f)]
+         [rep (car (coninfo-ktypes ci))])
+    (when (and (> k (length vs)) (not fallback?))
+      (cerror loc "Can't make a derived instance of ~a for ~a: the newtype has too few parameters"
+              (uname-base cu) (uname-base (datainfo-name di))))
+    (let loop ([rep rep] [dropped (if (> k (length vs)) #f (reverse (list-tail vs (- (length vs) k))))])
+      (cond
+        [(not dropped) #f]
+        [(null? dropped)
+          `(instance-k ,loc (gnd ,rep) ,cu
+                       ,(fold-left (lambda (f v) `(ta ,f (tv ,v))) `(tc ,(datainfo-name di))
+                                   (list-head vs (- (length vs) k)))
+                       ())]
+        [else
+          (match rep
+            [('ta f ('tv v)) (guard (and (eq? v (car dropped)) (not (memq v (ktype-vars f)))))
+             (loop f (cdr dropped))]
+            [else (and (not fallback?)
+                       (cerror loc "Can't make a derived instance of ~a for ~a: cannot eta-reduce the representation type enough"
+                               (uname-base cu) (uname-base (datainfo-name di))))])]))))
+
+;; how many arguments the class variable takes (Num: 0, Monad: 1)
+(define (class-type-arity cu)
+  (let* ([ci (hashtable-ref class-table cu #f)]
+         [tv (classinfo-tyvar ci)]
+         [n (fold-left max 0 (map (lambda (m) (match (cdr m) [('qt _ kt . _) (class-var-arity tv kt)]))
+                                  (classinfo-msigs ci)))])
+    (if (and (= n 0) (pair? (classinfo-supers ci)))
+        (apply max (map class-type-arity (classinfo-supers ci)))
+        n)))
+
+(define (derive-stock-instance loc di cu)
   (let* ([cname (uname-base cu)]
          [cis (map (lambda (c) (hashtable-ref con-table c #f)) (datainfo-cons di))]
          [functorish? (member cname '("Functor" "Foldable" "Traversable"))]
-         [ctx-vars (if functorish?
-                       '()
-                       (constrained-tyvars di))]
+         [ctx-types (if functorish? '() (derived-context-types di))]
          [ty (if functorish?
                  (let ([vs (datainfo-tyvars di)])
                    (when (null? vs) (cerror loc "cannot derive ~a for a type without parameters" cname))
@@ -89,8 +145,8 @@
             [(string=? cname "Foldable") (derive-foldable loc di cis)]
             [(string=? cname "Traversable") (derive-traversable loc di cis)]
             [(string=? cname "Read") (derive-read loc di cis)]
-            [else (cerror loc "Can't make a derived instance of ~a (only Eq, Ord, Show, Read, Enum, Bounded, Ix, Functor, Foldable and Traversable can be derived)" cname)])])
-    `(instance-k ,loc ,(map (lambda (v) (cons cu `(tv ,v))) ctx-vars) ,cu ,ty ,decls)))
+            [else (cerror loc "Can't make a derived instance of ~a (only Eq, Ord, Show, Read, Enum, Bounded, Ix, Functor, Foldable, Traversable and Exception can be derived; a newtype can derive any class its representation type has)" cname)])])
+    `(instance-k ,loc ,(map (lambda (t) (cons cu t)) ctx-types) ,cu ,ty ,decls)))
 
 (define (enum-type? cis) (for-all (lambda (c) (= 0 (coninfo-arity c))) cis))
 

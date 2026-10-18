@@ -1,8 +1,9 @@
+-- Control.Exception: throwing and catching exceptions.  Define your own
+-- exception types with  instance Exception MyError  (Show is required).
 module Control.Exception (
-  SomeException, catch, try, handle, evaluate, throwIO, throw, bracket, bracket_, bracketOnError,
-  finally, onException,
-  displayException, ErrorCall
+  SomeException, Exception(toException, fromException, displayException),
+  IOException, ErrorCall(..), ArithException(..),
+  catch, catchJust, handle, handleJust, try, tryJust, evaluate, throwIO, throw, ioError,
+  bracket, bracket_, bracketOnError, finally, onException
   ) where
 import Husk.Base
-
-type ErrorCall = SomeException
