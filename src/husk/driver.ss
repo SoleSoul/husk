@@ -176,8 +176,16 @@
 ;;; Error reporting and running
 
 (define (flush-std)
-  (flush-output-port (current-output-port))
-  (flush-output-port (current-error-port)))
+  (guard (e [(broken-pipe? e) (void)])
+    (flush-output-port (current-output-port))
+    (flush-output-port (current-error-port))))
+
+;; writing to a closed pipe (husk prog.hs | head): stop quietly, like
+;; other Unix programs killed by SIGPIPE
+(define (broken-pipe? e)
+  (and (i/o-error? e) (irritants-condition? e)
+       (exists (lambda (x) (and (string? x) (string-ci=? x "broken pipe")))
+               (condition-irritants e))))
 
 (define (condition->string e)
   (cond
@@ -229,6 +237,7 @@
                (check-main-type! modname)))])
     (keyboard-interrupt-handler (lambda () (flush-std) (exit 130)))
     (guard (e [(hs-exit? e) (flush-std) (exit (hs-exit-code e))]
+              [(broken-pipe? e) (exit 141)]
               [#t (report-runtime-error e) (exit 1)])
       (hs-run-io (eval u (the-env)))
       (flush-std)
@@ -764,6 +773,7 @@ usage:
 (define (eval-expression-string text)
   (guard (e [(husk-error? e) (report-compile-error e) (exit 1)]
             [(hs-exit? e) (flush-std) (exit (hs-exit-code e))]
+            [(broken-pipe? e) (exit 141)]
             [#t (report-runtime-error e) (exit 1)])
     (ensure-module! "Prelude" #f)
     (repl-eval-expr (parse-expression-string text "<command line>"))

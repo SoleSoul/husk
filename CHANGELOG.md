@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Writing to a closed pipe (`husk prog.hs | head`) stops the program
+  quietly with status 141 instead of printing an exception.
+
 ## 0.1.1 (2026-10-18)
 
 Fixes and additions for following *Learn You a Haskell*, prompted by an
