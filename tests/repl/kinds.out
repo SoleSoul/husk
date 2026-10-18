@@ -1,0 +1,18 @@
+husk> Maybe :: * -> *
+husk> Int :: *
+husk> Either String :: * -> *
+husk> Maybe Int :: *
+husk> (->) :: * -> * -> *
+husk> [] :: * -> *
+husk> (,) :: * -> * -> *
+husk> Functor :: (* -> *) -> Constraint
+husk> Eq :: * -> Constraint
+husk> husk> Frank :: * -> (* -> *) -> *
+husk> husk> Tofu :: (* -> * -> *) -> * -> * -> *
+husk> husk> Tofu2 :: (* -> (* -> *) -> *) -> Constraint
+husk> husk> Rose :: (* -> *) -> * -> *
+husk> husk> M.Map :: * -> * -> *
+husk> String :: *
+husk> <interactive>:1:1: error:
+    Kind mismatch: expected ‘*’, but got ‘* -> *’
+husk> 

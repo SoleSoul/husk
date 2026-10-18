@@ -499,6 +499,8 @@
     [('pvar . _) #t]
     [('pwild . _) #t]
     [('plazy . _) #t]
+    ;; a newtype constructor is erased, so matching it can't fail or force
+    [('pcon _ cu (sub)) (and (eq? (con-rep cu) 'newtype) (irrefutable? sub))]
     [else #f]))
 
 ;; v: symbol holding the value; whnf?: is it known to be evaluated?

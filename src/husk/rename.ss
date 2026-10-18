@@ -744,7 +744,7 @@
 (define (split-decls decls)
   (let loop ([ds decls] [sigs '()] [fix '()] [binds '()])
     (if (null? ds)
-        (values (reverse sigs) (reverse fix) (reverse binds))
+        (values (reverse sigs) (reverse fix) (annotate-patbind-sigs (reverse binds) sigs))
         (match (car ds)
           [('sig . _) (loop (cdr ds) (cons (car ds) sigs) fix binds)]
           [('fixity . _) (loop (cdr ds) sigs (cons (car ds) fix) binds)]
@@ -752,6 +752,34 @@
           [('patbind . _) (loop (cdr ds) sigs fix (cons (car ds) binds))]
           [('ignored . _) (loop (cdr ds) sigs fix binds)]
           [else (cerror (cadr (car ds)) "this declaration is not allowed here")]))))
+
+;; A signature for a variable of a pattern binding (x :: Int with
+;; (x, y) = ...) becomes a pattern signature on that variable, so it is
+;; checked.  Signatures with a context or type variables are not supported
+;; there and stay ignored.
+(define (annotate-patbind-sigs binds sigs)
+  (let ([mono (concat-map (lambda (s)
+                            (match s
+                              [('sig loc names qt)
+                               (match (rn-qual-type qt)
+                                 [('qt () t . _) (guard (null? (ktype-vars t)))
+                                  (map (lambda (n) (cons n qt)) names)]
+                                 [else '()])]))
+                          sigs)])
+    (define (walk p)
+      (match p
+        [('pvar loc (? string? name))
+         (let ([s (assoc name mono)]) (if s `(psig ,loc ,p ,(cdr s)) p))]
+        [('psig loc sub qt) `(psig ,loc ,(walk sub) ,qt)]
+        [(a . d) (cons (walk a) (walk d))]
+        [else p]))
+    (if (null? mono)
+        binds
+        (map (lambda (b)
+               (match b
+                 [('patbind loc pat rhs) `(patbind ,loc ,(walk pat) ,rhs)]
+                 [else b]))
+             binds))))
 
 (define (check-clause-arity loc name clauses)
   (let ([n (length (car (car clauses)))])

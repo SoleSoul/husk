@@ -1,0 +1,22 @@
+:k Maybe
+:k Int
+:k Either String
+:k Maybe Int
+:k (->)
+:k []
+:k (,)
+:k Functor
+:k Eq
+data Frank a b = Frank {frankField :: b a}
+:k Frank
+data Tofu t a b = Tofu (t b a)
+:k Tofu
+class Tofu2 t where tofu :: j a -> t a j
+:k Tofu2
+data Rose f a = Rose a (f (Rose f a))
+:k Rose
+import qualified Data.Map as M
+:k M.Map
+:k String
+:k Maybe Maybe
+:q

@@ -4,7 +4,7 @@
 ;;;   source --lex/parse--> surface AST --rename--> kernel --typecheck-->
 ;;;   annotated kernel --codegen--> Scheme forms --eval--> live definitions
 
-(define husk-version "0.1.0")
+(define husk-version "0.1.1")
 (define husk-home (or (getenv "HUSK_HOME") "."))
 (define user-dirs '())         ; where user modules are searched (main file's dir)
 (define dump-scheme? #f)       ; print generated Scheme code
@@ -364,18 +364,34 @@
              (printf "~a :: ~a\n" (string-trim text)
                      (if (Scheme? sch) (scheme->string sch) (type->string sch)))))))))
 
+;; resolve names in the REPL's scope while running thunk
+(define (with-repl-scope modname thunk)
+  (R-reset! modname)
+  (dynamic-wind
+    (lambda () (set! R-repl-vals repl-vals) (set! R-repl-types repl-types))
+    (lambda ()
+      (for-each import-module! (cons `(import ,(repl-loc) "Prelude" #f #f #f #f) repl-imports))
+      (thunk))
+    (lambda () (set! R-repl-vals (make-hashtable string-hash string=?))
+               (set! R-repl-types (make-hashtable string-hash string=?)))))
+
+;; :k TYPE -- the kind of a type (or of a class)
+(define (repl-kind text)
+  (with-repl-scope "Ghci-kind"
+   (lambda ()
+     (let* ([cache (make-eq-hashtable)]
+            [te (guard (e [#t #f]) (resolve-type-entry (repl-loc) #f text))]
+            [k (if (and te (hashtable-ref class-table (car te) #f))
+                   (tycon-kind (car te) cache (repl-loc))
+                   (let-values ([(imps decls) (parse-decls-string (string-append "ghci_kind :: " text) "<interactive>")])
+                     (match decls
+                       [(('sig loc names ('qtype () t . _))) (ktype-kind (rn-type t #t) (box '()) cache loc)]
+                       [else (cerror (repl-loc) "Not a type: ~a" text)])))])
+       (printf "~a :: ~a\n" text (kind->string k))))))
+
 ;; :i NAME -- information about a value, type or class in scope
 (define (repl-info name)
-  (define (with-scope thunk)
-    ;; resolve names in the REPL's scope
-    (R-reset! "Ghci-info")
-    (dynamic-wind
-      (lambda () (set! R-repl-vals repl-vals) (set! R-repl-types repl-types))
-      (lambda ()
-        (for-each import-module! (cons `(import ,(repl-loc) "Prelude" #f #f #f #f) repl-imports))
-        (thunk))
-      (lambda () (set! R-repl-vals (make-hashtable string-hash string=?))
-                 (set! R-repl-types (make-hashtable string-hash string=?)))))
+  (define (with-scope thunk) (with-repl-scope "Ghci-info" thunk))
   (define (show-scheme u)
     (let ([sch (hashtable-ref type-env u #f)])
       (if (Scheme? sch) (scheme->string sch) (type->string sch))))
@@ -511,6 +527,7 @@
   x <- <IO action>    run an action and bind its result
   import Data.List    import a module
   :t <expression>     show the type of an expression
+  :k <type>           show the kind of a type (or class)
   :i <name>           information about a function, type or class
   :browse <module>    list what a module exports
   :l <file>           load a source file
@@ -533,6 +550,8 @@
        (repl-load! (string-trim (substring trimmed (+ 1 (index-of #\space (string->list trimmed))) (string-length trimmed))))]
       [(or (string=? trimmed ":r") (string=? trimmed ":reload"))
        (if repl-loaded-file (repl-load! repl-loaded-file) (display "No file loaded.\n"))]
+      [(or (starts-with? trimmed ":k ") (starts-with? trimmed ":kind "))
+       (repl-kind (string-trim (substring trimmed (+ 1 (index-of #\space (string->list trimmed))) (string-length trimmed))))]
       [(or (starts-with? trimmed ":i ") (starts-with? trimmed ":info "))
        (for-each repl-info (filter (lambda (w) (not (string=? w "")))
                                    (cdr (string-split trimmed #\space))))]

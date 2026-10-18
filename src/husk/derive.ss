@@ -353,8 +353,8 @@
                                                  (cdr actions)))))))
                  cis)))))
 
-;; Read: supports prefix constructors (with arguments) and records are read
-;; positionally as prefix applications.
+;; Read: supports prefix constructors (with arguments) and records in
+;; record syntax, C {f1 = v1, f2 = v2}, as derived Show prints them.
 (define (derive-read loc di cis)
   (list
    (s-fun loc "readsPrec"
@@ -367,8 +367,30 @@
                                                    (let* ([n (coninfo-arity c)])
                                                      `(tuple ,loc
                                                              (,(s-str loc (uname-base (coninfo-name c)))
-                                                              ,(derive-read-con loc c n)))))
+                                                              ,(if (and (> n 0) (car (coninfo-fields c)))
+                                                                   (derive-read-record loc c n)
+                                                                   (derive-read-con loc c n))))))
                                                  cis)))))))))
+
+;; builds:  \s0 -> [(C a1 a2, s2) | s0' <- primReadToken "{" s0,
+;;                                (a1, s1) <- primReadField "f1" "," s0',
+;;                                (a2, s2) <- primReadField "f2" "}" s1]
+(define (derive-read-record loc c n)
+  (let* ([ss (map (lambda (i) (format "s~a" i)) (iota (+ n 1)))]
+         [as (vars-named "a" n)]
+         [names (map uname-base (coninfo-fields c))])
+    `(lam ,loc ((pvar ,loc "s0"))
+          (listcomp ,loc
+                    (tuple ,loc (,(apply s-app loc (s-con loc (coninfo-name c)) (map (lambda (a) (s-var loc a)) as))
+                                 ,(s-var loc (list-ref ss n))))
+                    ((sbind ,loc (pvar ,loc "open")
+                            ,(s-app loc (s-orig loc "primReadToken") (s-str loc "{") (s-var loc "s0")))
+                     ,@(map (lambda (a name i)
+                              `(sbind ,loc (ptuple ,loc ((pvar ,loc ,a) (pvar ,loc ,(list-ref ss (+ i 1)))))
+                                      ,(s-app loc (s-orig loc "primReadField") (s-str loc name)
+                                              (s-str loc (if (= i (- n 1)) "}" ","))
+                                              (s-var loc (if (= i 0) "open" (list-ref ss i))))))
+                            as names (iota n)))))))
 
 ;; builds:  \s0 -> [(C a1 a2, s2) | (a1, s1) <- readsPrec 11 s0, (a2, s2) <- readsPrec 11 s1]
 (define (derive-read-con loc c n)

@@ -1227,7 +1227,7 @@ class Foldable t where
   sum :: Num a => t a -> a
   product :: Num a => t a -> a
   foldMap f t = foldr (\x acc -> f x <> acc) mempty t
-  foldr f z t = listFoldr f z (toList t)
+  foldr f z t = appEndo (foldMap (\x -> Endo (f x)) t) z
   foldl f z t = listFoldl f z (toList t)
   foldr' f z t = listFoldr f z (toList t)
   foldl' f z t = listFoldl' f z (toList t)
@@ -2187,6 +2187,20 @@ primReadCons :: Int -> [(String, ReadS a)] -> ReadS a
 primReadCons d alts = readParen False go
   where go s = [r | (tok, rest) <- lex s, (name, rd) <- alts, tok == name, r <- rd rest]
 
+-- a record field "name = value" followed by the token next ("," or "}")
+primReadField :: Read a => String -> String -> ReadS a
+primReadField name next s =
+  [(v, s4) | s1 <- fieldName s, ("=", s2) <- lex s1,
+             (v, s3) <- readsPrec 0 s2, (tok, s4) <- lex s3, tok == next]
+  where
+    -- an operator field is shown in parentheses: (+++) = ...
+    fieldName s
+      | isAlpha (head name) || head name == '_' = primReadToken name s
+      | otherwise = [s3 | s1 <- primReadToken "(" s, s2 <- primReadToken name s1, s3 <- primReadToken ")" s2]
+
+primReadToken :: String -> String -> [String]
+primReadToken t s = [rest | (tok, rest) <- lex s, tok == t]
+
 ------------------------------------------------------------------------
 -- IO
 
@@ -2225,6 +2239,19 @@ openFile path mode = primOpenFile path (fromEnum mode)
 
 withFile :: FilePath -> IOMode -> (Handle -> IO r) -> IO r
 withFile path mode act = openFile path mode >>= \h -> act h >>= \r -> hClose h >> return r
+
+foreign import prim "hs-does-file-exist" primFileExists :: FilePath -> IO Bool
+
+-- creates and opens a new file in dir: "temp" -> dir/temp123, "x.txt" -> dir/x123.txt
+openTempFile :: FilePath -> String -> IO (FilePath, Handle)
+openTempFile dir template = getCPUTime >>= \t -> go (fromInteger (t `div` 1000000 `mod` 100000))
+  where
+    (base, ext) = case break (== '.') (reverse template) of
+                    (rext, '.' : rbase) -> (reverse rbase, '.' : reverse rext)
+                    _ -> (template, "")
+    go n = let path = dir ++ "/" ++ base ++ show (n :: Int) ++ ext
+           in primFileExists path >>= \e ->
+                if e then go (n + 1) else openFile path WriteMode >>= \h -> return (path, h)
 
 modifyIORef :: IORef a -> (a -> a) -> IO ()
 modifyIORef r f = readIORef r >>= \x -> writeIORef r (f x)
@@ -2270,6 +2297,16 @@ bracket acquire release use = acquire >>= \a ->
 
 finally :: IO a -> IO b -> IO a
 finally a sequel = catch a (\e -> sequel >> throwIO e) >>= \r -> sequel >> return r
+
+bracket_ :: IO a -> IO b -> IO c -> IO c
+bracket_ before after thing = bracket before (const after) (const thing)
+
+-- like bracket, but only releases when the action fails
+bracketOnError :: IO a -> (a -> IO b) -> (a -> IO c) -> IO c
+bracketOnError acquire release use = acquire >>= \a -> catch (use a) (\e -> release a >> throwIO e)
+
+onException :: IO a -> IO b -> IO a
+onException a what = catch a (\e -> what >> throwIO e)
 
 -- System.Exit
 

@@ -12,7 +12,7 @@ Scheme compiler, so it doesn't need GHC's gigabyte-sized toolchain.
 
 ```
 $ husk
-husk 0.1.0 -- a lightweight Haskell.  :? for help, :q to quit
+husk 0.1.1 -- a lightweight Haskell.  :? for help, :q to quit
 husk> let fibs = 0 : 1 : zipWith (+) fibs (tail fibs)
 husk> take 10 fibs
 [0,1,1,2,3,5,8,13,21,34]
@@ -47,7 +47,8 @@ husk --check prog.hs     typecheck only
 husk --scheme prog.hs    show the generated Scheme code, then run
 ```
 
-REPL commands: `:t expr`, `:l file.hs`, `:r` (reload), `:{ ... :}` for
+REPL commands: `:t expr` (type), `:k Type` (kind), `:i name` (info),
+`:browse Module`, `:l file.hs`, `:r` (reload), `:{ ... :}` for
 multi-line input, `:q`. Definitions (`f x = ...`, `data ...`, `instance ...`)
 and `import` lines work directly at the prompt, as do `x <- action` lines.
 

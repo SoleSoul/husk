@@ -1,0 +1,15 @@
+("can","bcdefghijklmnopqrstuvwx")
+("bort",[98,111,114,116],4,98,116)
+"()*+,-./0"
+("UPQRT","23456789:;<")
+("hihih","zzzz",[])
+(["hello","byte","world"],["x","y"],"a b")
+(Just (-42," rest"),Just (7,""),Nothing,Just (123456789012345678901,""))
+(["a","b","","c"],[],["b","n","n",""])
+("h\233llo","\200","\255\NUL,")
+(55,"x","cba")
+(True,Just 2,3)
+("BC","\STX\EOT\ACK\b",True)
+("hi",True,"ab")
+(("hey","!!"),("a/b/","c"),Just ("a",'b'))
+10

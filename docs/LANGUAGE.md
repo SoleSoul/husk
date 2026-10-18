@@ -97,19 +97,23 @@ The Prelude exports the same names as GHC's Prelude. Other modules:
 | `Control.Monad` | `forM_`, `forM`, `when`, `unless`, `replicateM`, `foldM`, `zipWithM_`, `filterM`, `forever`, `guard`, `mplus`, ... |
 | `Control.Monad.State`, `Control.Monad.Reader`, `Control.Monad.Writer` | mtl-style monads and transformers: `State`/`StateT` (`get`, `put`, `modify`, `gets`, `evalState`, `execStateT`, ...), `Reader`/`ReaderT` (`ask`, `asks`, `local`), `Writer`/`WriterT` (`tell`, `runWriter`); `lift`, `liftIO` (also `Control.Monad.Trans.*`, `Control.Monad.IO.Class`) |
 | `Control.Monad.ST`, `Data.STRef` | `runST`, `newSTRef`, `readSTRef`, `modifySTRef'`, ... |
-| `Control.Applicative` | `Alternative` (`empty`, `<|>`, `many`, `some`), `liftA2`, `optional` |
-| `Control.Exception` | `catch`, `try`, `evaluate`, `throwIO`, `bracket`, `finally`, `SomeException` |
+| `Control.Applicative` | `Alternative` (`empty`, `<|>`, `many`, `some`), `liftA2`, `optional`, `ZipList` |
+| `Control.Exception` | `catch`, `try`, `evaluate`, `throwIO`, `bracket`, `bracket_`, `bracketOnError`, `finally`, `onException`, `SomeException` |
 | `Data.Foldable`, `Data.Traversable`, `Data.Functor`, `Data.Functor.Identity` | `for_`, `traverse_`, `foldrM`, `(<&>)`, `($>)`, `Identity`, ... |
 | `Data.Monoid`, `Data.Semigroup` | `Sum`, `Product`, `Min`, `Max`, `First`, `Last`, `Any`, `All`, `Endo` |
 | `Data.Bits` | `.&.`, `.\|.`, `xor`, `shiftL`, `shiftR`, `popCount`, `testBit`, ... |
 | `Data.Ratio` | `Rational`, `%`, `numerator`, `denominator` |
 | `Data.Int`, `Data.Word` | `Int64`, `Word8`, ... (as synonyms of `Int`, see below) |
 | `Data.Text`, `Data.Text.IO` | a `Text` type with the common functions (`pack`, `unpack`, `strip`, `splitOn`, `words`, `replace`, ...) |
+| `Data.ByteString`, `Data.ByteString.Char8`, `Data.ByteString.Lazy`, `Data.ByteString.Lazy.Char8` | byte strings: `pack`, `unpack`, `readFile`, `writeFile`, `getContents`, `lines`, `words`, `readInt`, `fromChunks`, ... (see below) |
 | `Data.String` | `IsString` |
 | `Text.Printf` | `printf` (to stdout or to a `String`), `hPrintf` |
 | `Text.Read` | `readMaybe`, `readEither` |
 | `Numeric` | `showHex`, `showOct`, `showFFloat`, `showEFloat`, `readHex`, ... |
-| `System.IO` | handles (`stdin`, `stdout`, `stderr`), `hFlush`, `hSetBuffering`, `hGetLine`, `hPutStrLn`, `openFile`, `withFile`, `isEOF`, ... |
+| `System.IO` | handles (`stdin`, `stdout`, `stderr`), `hFlush`, `hSetBuffering`, `hGetLine`, `hPutStrLn`, `openFile`, `withFile`, `openTempFile`, `isEOF`, ... |
+| `System.IO.Error` | `catchIOError`, `tryIOError`, `isDoesNotExistError`, `isPermissionError`, `isEOFError`, `isUserError`, `ioeGetFileName`, ... |
+| `System.Directory` | `doesFileExist`, `doesDirectoryExist`, `removeFile`, `renameFile`, `copyFile`, `createDirectoryIfMissing`, `listDirectory`, `removeDirectoryRecursive`, `getCurrentDirectory`, `withCurrentDirectory`, ... |
+| `System.Random` | `StdGen`, `mkStdGen`, `random`, `randomR`, `randoms`, `randomRs`, `split`, `getStdGen`, `newStdGen`, `randomRIO`, `randomIO` (from the `random` package) |
 | `System.Exit`, `System.Environment`, `System.CPUTime`, `Debug.Trace` | `exitWith`, `exitFailure`, `getArgs`, `getProgName`, `getCPUTime`, `trace`, `traceShow`, ... |
 
 ## Differences from GHC
@@ -124,15 +128,17 @@ you might notice:
 - **Your own definitions win.** If your module defines a name that an import
   also provides (say you define your own `lookup`), husk uses your definition.
   GHC reports an "Ambiguous occurrence" error instead.
-- **One exception type.** All exceptions are `SomeException`. `catch` and
-  `try` handle every exception; you can't define your own exception types or
-  catch only certain kinds.
+- **One exception type.** All exceptions are `SomeException` (and `IOError`
+  is a synonym for it). `catch` and `try` handle every exception; you can't
+  define your own exception types. `System.IO.Error` recognizes IO errors by
+  their messages, so `catchIOError` and `isDoesNotExistError` work as usual.
 - **No warnings, and some checks happen at run time.** Non-exhaustive
   patterns and missing instance methods are run-time errors (with a source
   location), not compile-time warnings.
-- **Type signatures for pattern bindings are ignored** (`x, y :: Int` followed
-  by `(x, y) = ...`). Type variables of instance heads don't scope over the
-  instance's methods.
+- **Type signatures for pattern bindings** (`x, y :: Int` followed by
+  `(x, y) = ...`) are checked only when they have no type variables or
+  context; others (`n :: Num a => a`) are ignored. Type variables of
+  instance heads don't scope over the instance's methods.
 - **Only a simple kind check.** Using a type constructor without all its
   arguments where a complete type is needed (`f :: Maybe -> Int`) is reported,
   but other kind errors may show up as odd type errors, or not at all.
@@ -149,8 +155,16 @@ you might notice:
 - **`runST` has the type `ST s a -> a`** (husk has no rank-2 types), so the
   type system doesn't stop an `STRef` escaping from `runST`.
 - **`Text` is a wrapper around `String`**, so it is not faster than `String`.
+- **`ByteString` is a wrapper around `String`** too, with one character
+  (below 256) per byte, so it is not faster either. Strict and lazy
+  ByteStrings are the same type (`fromStrict` and friends are identities).
+  `readFile` and `writeFile` work byte for byte; the terminal and handles
+  are text, converted with UTF-8.
+- **`System.Random`** uses SplitMix, like the `random` package (so
+  `mkStdGen 42` is the same generator), but the numbers drawn from a seed
+  may differ from GHC's.
 - **`Read`** works for numbers, characters, strings, lists, tuples, `Maybe`,
-  `Either` and derived instances of simple types (record syntax isn't parsed).
+  `Either` and derived instances (including record syntax, as `show` prints it).
 - **Defaulting** also picks `String` for `IsString` constraints. In the REPL,
   GHCi's extended rules apply: `()` for unconstrained show-able values, `IO`
   for monads (so `return 5` runs), lists for `Foldable`.

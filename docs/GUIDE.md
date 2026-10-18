@@ -125,14 +125,16 @@ without:
 - monad transformers: pass state explicitly or use `Control.Monad.State`;
 - GADTs, type families, lenses, `Data.Typeable`, Template Haskell (husk
   doesn't support these anyway);
-- `Data.Text` and `ByteString`, since `String` is fine for problem solving;
+- `Data.Text` and `ByteString`, since `String` is fine for problem solving
+  (in husk they are wrappers around `String`, so they are no faster);
 - writing `Functor`/`Monad` instances, except as an exercise.
 
 ## husk-specific tips
 
 - `husk --check prog.hs` typechecks without running.
-- `:t expr` in the REPL shows any expression's type, `:i name` shows a
-  function, type or class, and `:browse Data.Map` lists what a module offers.
+- `:t expr` in the REPL shows any expression's type, `:k Type` a type's
+  kind, `:i name` shows a function, type or class, and `:browse Data.Map`
+  lists what a module offers.
 - `Debug.Trace.trace "msg" value` prints while evaluating, which is handy for
   debugging pure code.
 - husk's `Int` never overflows (it's arbitrary precision), so a program that

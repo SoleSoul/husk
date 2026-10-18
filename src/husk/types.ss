@@ -1073,3 +1073,108 @@
        (default-all! T-wanted)
        (set! T-wanted '())
        inst-infos)]))
+
+;;; ------------------------------------------------------------------
+;;; Kinds (for the REPL's :k)
+;;;
+;;; A kind is *, Constraint, (-> k1 k2) or a kind variable #(kv ref).
+;;; Kinds are inferred from constructor fields, synonym bodies and method
+;;; signatures, and unconstrained parameters default to *, as in Haskell 98.
+
+(define (new-kvar) (vector 'kv #f))
+(define (kvar? k) (and (vector? k) (eq? (vector-ref k 0) 'kv)))
+
+(define (kind-prune k)
+  (if (and (kvar? k) (vector-ref k 1)) (kind-prune (vector-ref k 1)) k))
+
+(define (kind-arrows ks res) (fold-right (lambda (k acc) `(-> ,k ,acc)) res ks))
+
+(define (kind-default! k)
+  (let ([k (kind-prune k)])
+    (cond [(kvar? k) (vector-set! k 1 '*)]
+          [(pair? k) (kind-default! (cadr k)) (kind-default! (caddr k))])))
+
+(define (kind->string k)
+  (let ([k (kind-prune k)])
+    (cond [(kvar? k) "*"]
+          [(pair? k)
+           (let ([a (kind-prune (cadr k))])
+             (format (if (pair? a) "(~a) -> ~a" "~a -> ~a")
+                     (kind->string a) (kind->string (caddr k))))]
+          [else (symbol->string k)])))
+
+(define (kind-unify! a b loc)
+  (define (occurs? v k)
+    (let ([k (kind-prune k)])
+      (or (eq? v k) (and (pair? k) (or (occurs? v (cadr k)) (occurs? v (caddr k)))))))
+  (let ([a (kind-prune a)] [b (kind-prune b)])
+    (cond
+      [(eq? a b) (void)]
+      [(and (kvar? a) (not (occurs? a b))) (vector-set! a 1 b)]
+      [(and (kvar? b) (not (occurs? b a))) (vector-set! b 1 a)]
+      [(and (pair? a) (pair? b))
+       (kind-unify! (cadr a) (cadr b) loc)
+       (kind-unify! (caddr a) (caddr b) loc)]
+      [else (cerror loc "Kind mismatch: expected ‘~a’, but got ‘~a’"
+                    (kind->string a) (kind->string b))])))
+
+;; kind of a kernel type; env: alist tyvar-symbol -> kind (extended with
+;; fresh kinds for unknown variables)
+(define (ktype-kind kt env cache loc)
+  (match kt
+    [('tv n)
+     (cdr (or (assq n (unbox env))
+              (let ([p (cons n (new-kvar))]) (set-box! env (cons p (unbox env))) p)))]
+    [('tc u) (tycon-kind u cache loc)]
+    [('ta f x)
+     (let ([kf (ktype-kind f env cache loc)] [kx (ktype-kind x env cache loc)] [r (new-kvar)])
+       (kind-unify! kf `(-> ,kx ,r) loc)
+       r)]))
+
+;; cache: hashtable uname -> kind (entries are added before a type's fields
+;; are examined, so recursive types see their own kind)
+(define (tycon-kind u cache loc)
+  (define (params vars) (map (lambda (v) (cons v (new-kvar))) vars))
+  (or (hashtable-ref cache u #f)
+      (cond
+        [(eq? u u-arrow) '(-> * (-> * *))]
+        [(hashtable-ref synonym-table u #f)
+         => (lambda (syn)
+              (let* ([env (box (params (car syn)))] [ks (map cdr (unbox env))] [r (new-kvar)])
+                (hashtable-set! cache u (kind-arrows ks r))
+                (kind-unify! r (ktype-kind (cdr syn) env cache loc) loc)
+                (let ([k (kind-arrows ks r)]) (kind-default! k) k)))]
+        [(hashtable-ref data-table u #f)
+         => (lambda (di)
+              (let* ([env (box (params (datainfo-tyvars di)))] [k (kind-arrows (map cdr (unbox env)) '*)])
+                (hashtable-set! cache u k)
+                (for-each (lambda (cu)
+                            (let ([ci (hashtable-ref con-table cu #f)])
+                              (for-each (lambda (ft) (kind-unify! (ktype-kind ft env cache loc) '* loc))
+                                        (or (and ci (coninfo-ktypes ci)) '()))))
+                          (datainfo-cons di))
+                (kind-default! k)
+                k))]
+        [(hashtable-ref class-table u #f)
+         => (lambda (ci)
+              (let* ([kv (new-kvar)] [k `(-> ,kv Constraint)])
+                (hashtable-set! cache u k)
+                (for-each (lambda (s) (kind-unify! (class-param-kind s cache loc) kv loc))
+                          (classinfo-supers ci))
+                (for-each (lambda (m)
+                            (match (cdr m)
+                              [('qt ctx t . _)
+                               (let ([env (box (list (cons (classinfo-tyvar ci) kv)))])
+                                 (kind-unify! (ktype-kind t env cache loc) '* loc)
+                                 (for-each (lambda (c)
+                                             (kind-unify! (ktype-kind (cdr c) env cache loc)
+                                                          (class-param-kind (car c) cache loc) loc))
+                                           ctx))]
+                              [else (void)]))
+                          (or (classinfo-msigs ci) '()))
+                (kind-default! k)
+                k))]
+        [else '*])))
+
+(define (class-param-kind cls cache loc)
+  (cadr (kind-prune (tycon-kind cls cache loc))))

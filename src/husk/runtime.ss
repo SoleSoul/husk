@@ -38,6 +38,10 @@
    ;; IO
    hs-io-return hs-io-bind hs-io-then hs-run-io hs-put-str hs-put-char hs-get-line
    hs-get-char hs-get-contents hs-read-file hs-write-file hs-append-file hs-is-eof
+   hs-read-file-bytes hs-write-file-bytes hs-append-file-bytes
+   hs-does-file-exist hs-does-directory-exist hs-remove-file hs-rename-file hs-create-directory
+   hs-remove-directory hs-list-directory hs-get-current-directory hs-set-current-directory
+   hs-get-file-size
    hs-flush hs-stdout hs-stderr hs-stdin hs-hput-str hs-hget-line hs-hclose
    hs-hflush hs-his-eof hs-hget-contents hs-open-file hs-exit-with
    hs-get-args set-hs-args! hs-get-prog-name set-hs-prog-name!
@@ -753,42 +757,84 @@
       (eof-object? (peek-char (current-input-port)))))
   (define (hs-his-eof h) (lambda () (eof-object? (peek-char h))))
 
+  ;; Run a file system operation, turning a failure into an error shown
+  ;; like GHC's IOException: "path: who: does not exist (No such file or directory)"
   (define (io-guard who path thunk)
-    (guard (e [(i/o-error? e)
-               (hs-error (format "~a: ~a: ~a" path who
-                                 (if (message-condition? e) (condition-message e) "IO error")))])
+    (guard (e [(and (condition? e) (not (hs-exception? e)) (not (hs-exit? e)))
+               (let* ([irr (if (irritants-condition? e) (condition-irritants e) '())]
+                      [os (if (and (pair? irr) (string? (car (last-pair irr))))
+                              (car (last-pair irr))
+                              (if (message-condition? e)
+                                  (guard (_ [#t (condition-message e)])
+                                    (apply format (condition-message e) irr))
+                                  "IO error"))])
+                 (hs-error (format "~a: ~a: ~a (~a)" path who (os-error-kind os) os)))])
       (thunk)))
 
-  (define (hs-read-file path)
-    (lambda ()
-      (let ([p (hs->string path)])
-        (io-guard "openFile" p
-                  (lambda ()
-                    (let ([s (call-with-port (open-file-input-port p (file-options) (buffer-mode block)
-                                                                   (make-transcoder (utf-8-codec)))
-                               get-string-all)])
-                      (if (eof-object? s) '() (string->list s))))))))
+  (define (os-error-kind os)
+    (cond [(assoc os '(("No such file or directory" . "does not exist")
+                       ("Permission denied" . "permission denied")
+                       ("Operation not permitted" . "permission denied")
+                       ("Read-only file system" . "permission denied")
+                       ("File exists" . "already exists")
+                       ("Is a directory" . "inappropriate type")
+                       ("Not a directory" . "inappropriate type")
+                       ("Directory not empty" . "unsatisfied constraints")
+                       ("Resource busy" . "resource busy")
+                       ("Device or resource busy" . "resource busy")))
+           => cdr]
+          [else "failed"]))
 
-  (define (hs-write-file path s)
-    (lambda ()
-      (let ([p (hs->string path)])
-        (io-guard "openFile" p
-                  (lambda ()
-                    (call-with-port (open-file-output-port p (file-options no-fail) (buffer-mode block)
-                                                           (make-transcoder (utf-8-codec)))
-                      (lambda (port) (write-hs-string port s)))))
-        'unit)))
+  (define utf-8 (make-transcoder (utf-8-codec)))
+  ;; one character per byte, for Data.ByteString
+  (define latin-1 (make-transcoder (latin-1-codec)))
 
+  (define (read-file-with tc path)
+    (let ([p (hs->string path)])
+      (io-guard "openFile" p
+                (lambda ()
+                  (let ([s (call-with-port (open-file-input-port p (file-options) (buffer-mode block) tc)
+                             get-string-all)])
+                    (if (eof-object? s) '() (string->list s)))))))
+
+  (define (write-file-with tc options path s)
+    (let ([p (hs->string path)])
+      (io-guard "openFile" p
+                (lambda ()
+                  (call-with-port (open-file-output-port p options (buffer-mode block) tc)
+                    (lambda (port) (write-hs-string port s)))))
+      'unit))
+
+  (define (hs-read-file path) (lambda () (read-file-with utf-8 path)))
+  (define (hs-write-file path s) (lambda () (write-file-with utf-8 (file-options no-fail) path s)))
   (define (hs-append-file path s)
-    (lambda ()
-      (let ([p (hs->string path)])
-        (io-guard "openFile" p
-                  (lambda ()
-                    (call-with-port (open-file-output-port p (file-options no-fail no-truncate append)
-                                                           (buffer-mode block)
-                                                           (make-transcoder (utf-8-codec)))
-                      (lambda (port) (write-hs-string port s)))))
-        'unit)))
+    (lambda () (write-file-with utf-8 (file-options no-fail no-truncate append) path s)))
+  (define (hs-read-file-bytes path) (lambda () (read-file-with latin-1 path)))
+  (define (hs-write-file-bytes path s) (lambda () (write-file-with latin-1 (file-options no-fail) path s)))
+  (define (hs-append-file-bytes path s)
+    (lambda () (write-file-with latin-1 (file-options no-fail no-truncate append) path s)))
+
+  ;; System.Directory
+  (define (fs-action who path thunk)
+    (lambda () (let ([p (hs->string path)]) (io-guard who p (lambda () (thunk p))))))
+  (define (hs-does-file-exist path)
+    (lambda () (let ([p (hs->string path)]) (and (file-exists? p) (not (file-directory? p))))))
+  (define (hs-does-directory-exist path) (lambda () (file-directory? (hs->string path))))
+  (define (hs-remove-file path) (fs-action "removeFile" path (lambda (p) (delete-file p #t) 'unit)))
+  (define (hs-rename-file from to)
+    (fs-action "renameFile" from (lambda (p) (rename-file p (hs->string to)) 'unit)))
+  (define (hs-create-directory path) (fs-action "createDirectory" path (lambda (p) (mkdir p) 'unit)))
+  (define (hs-remove-directory path)
+    (fs-action "removeDirectory" path (lambda (p) (delete-directory p #t) 'unit)))
+  (define (hs-list-directory path)
+    (fs-action "listDirectory" path
+               (lambda (p) (map string->list (sort string<? (directory-list p))))))
+  (define hs-get-current-directory (lambda () (string->list (current-directory))))
+  (define (hs-set-current-directory path)
+    (fs-action "setCurrentDirectory" path (lambda (p) (current-directory p) 'unit)))
+  (define (hs-get-file-size path)
+    (fs-action "getFileSize" path
+               (lambda (p) (call-with-port (open-file-input-port p) port-length))))
 
   ;; mode: 0 read, 1 write, 2 append, 3 read/write (treated as write)
   (define (hs-open-file path mode)

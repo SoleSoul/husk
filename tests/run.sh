@@ -4,6 +4,8 @@
 #   tests/NAME.in                    optional stdin
 #   tests/errors/NAME.hs + NAME.err  program that must fail; .err holds a
 #                                    fragment that must appear in stderr
+#   tests/repl/NAME.repl + NAME.out  REPL input and its expected output
+#                                    (without the banner line)
 cd "$(dirname "$0")/.."
 HUSK=./bin/husk
 pass=0; fail=0
@@ -21,6 +23,13 @@ for t in tests/errors/*.hs; do
   $HUSK "$t" < /dev/null > "$tmp" 2>&1
   if grep -qF -- "$(cat "$base.err")" "$tmp"; then pass=$((pass+1)); else
     fail=$((fail+1)); echo "FAIL: $t (expected: $(cat "$base.err"))"; head -5 "$tmp"; fi
+done
+for t in tests/repl/*.repl; do
+  base=${t%.repl}
+  [ -f "$base.out" ] || continue
+  HUSK_NO_RLWRAP=1 $HUSK < "$t" 2>&1 | tail -n +2 > "$tmp"
+  if cmp -s "$tmp" "$base.out"; then pass=$((pass+1)); else
+    fail=$((fail+1)); echo "FAIL: $t"; diff "$tmp" "$base.out" | head -10; fi
 done
 rm -f "$tmp"
 echo "passed: $pass  failed: $fail"

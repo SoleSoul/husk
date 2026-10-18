@@ -4,6 +4,6 @@ module System.IO (
   readFile, writeFile, appendFile, readIO, readLn,
   hPutStr, hPutStrLn, hPrint, hGetLine, hGetContents, hFlush, hClose, hIsEOF,
   BufferMode(..), hSetBuffering, hGetBuffering, hSetEcho,
-  IOMode(..), openFile, withFile
+  IOMode(..), openFile, withFile, openTempFile
   ) where
 import Husk.Base
